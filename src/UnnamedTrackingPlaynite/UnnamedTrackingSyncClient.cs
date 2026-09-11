@@ -22,10 +22,10 @@ internal sealed class UnnamedTrackingSyncGamePayload
     [DataMember(Name = "developer")] public string? Developer { get; set; }
     [DataMember(Name = "publisher")] public string? Publisher { get; set; }
     [DataMember(Name = "series")] public string? Series { get; set; }
-    [DataMember(Name = "tags")] public List<string> Tags { get; set; } = new();
-    [DataMember(Name = "features")] public List<string> Features { get; set; } = new();
-    [DataMember(Name = "collections")] public List<string> Collections { get; set; } = new();
-    [DataMember(Name = "links")] public List<UnnamedTrackingSyncLink> Links { get; set; } = new();
+    [DataMember(Name = "tags")] public List<string> Tags { get; set; } = new List<string>();
+    [DataMember(Name = "features")] public List<string> Features { get; set; } = new List<string>();
+    [DataMember(Name = "collections")] public List<string> Collections { get; set; } = new List<string>();
+    [DataMember(Name = "links")] public List<UnnamedTrackingSyncLink> Links { get; set; } = new List<UnnamedTrackingSyncLink>();
     [DataMember(Name = "source")] public string Source { get; set; } = string.Empty;
     [DataMember(Name = "age_rating")] public string? AgeRating { get; set; }
     [DataMember(Name = "favorite")] public bool Favorite { get; set; }
@@ -62,9 +62,13 @@ internal sealed class UnnamedTrackingSyncApiException : Exception
 {
     public int StatusCode { get; }
     public string ResponseBody { get; }
+
     public UnnamedTrackingSyncApiException(int statusCode, string responseBody, Exception inner)
         : base(statusCode > 0 ? $"The server returned HTTP {statusCode}." : "The Unnamed Tracking server could not be reached.", inner)
-    { StatusCode = statusCode; ResponseBody = responseBody ?? string.Empty; }
+    {
+        StatusCode = statusCode;
+        ResponseBody = responseBody ?? string.Empty;
+    }
 }
 
 internal sealed class UnnamedTrackingSyncClient
@@ -72,11 +76,15 @@ internal sealed class UnnamedTrackingSyncClient
     private const string CreatePath = "/api/game/create";
     private const string ListPath = "/api/game/list";
     private const int PageSize = 200;
+
     private readonly ILogger logger;
     private readonly IPlayniteAPI playniteApi;
 
     public UnnamedTrackingSyncClient(ILogger logger, IPlayniteAPI playniteApi)
-    { this.logger = logger; this.playniteApi = playniteApi; }
+    {
+        this.logger = logger;
+        this.playniteApi = playniteApi;
+    }
 
     public async Task<UnnamedTrackingUploadResult> UploadLibraryAsync(string apiUrl, string authValue, IEnumerable<Game> games)
     {
@@ -86,7 +94,10 @@ internal sealed class UnnamedTrackingSyncClient
         var sourceGames = (games ?? Enumerable.Empty<Game>()).ToList();
         var result = new UnnamedTrackingUploadResult { TotalGames = sourceGames.Count };
         Dictionary<string, UnnamedTrackingSyncExistingGame> existing;
-        try { existing = await GetExistingGamesAsync(apiUrl, authValue).ConfigureAwait(false); }
+        try
+        {
+            existing = await GetExistingGamesAsync(apiUrl, authValue).ConfigureAwait(false);
+        }
         catch (UnnamedTrackingSyncApiException ex)
         {
             foreach (var game in sourceGames) result.Failures.Add(Failure(game, "Lookup", ex));
@@ -105,16 +116,16 @@ internal sealed class UnnamedTrackingSyncClient
             try
             {
                 var payload = ToGamePayload(game);
-                UnnamedTrackingSyncExistingGame remote;
+                UnnamedTrackingSyncExistingGame? remote = null;
                 var found = existing.TryGetValue(payload.FolderLocation, out remote);
                 if (!found)
                 {
-                    var guidMatch = existing.Values.FirstOrDefault(item => item.PlayniteGuid == game.Id);
-                    if (guidMatch != null) { found = true; remote = guidMatch; }
+                    remote = existing.Values.FirstOrDefault(item => item.PlayniteGuid == game.Id);
+                    found = remote != null;
                 }
 
                 Guid remoteId;
-                if (found)
+                if (found && remote != null)
                 {
                     operation = "Update";
                     await SendJsonAsync(apiUrl.TrimEnd('/') + "/api/game/" + remote.Id, authValue, "PATCH", Serialize(payload)).ConfigureAwait(false);
@@ -216,7 +227,7 @@ internal sealed class UnnamedTrackingSyncClient
         return false;
     }
 
-    private async Task<string> SendJsonAsync(string endpoint, string authValue, string method, string body)
+    private async Task<string> SendJsonAsync(string endpoint, string authValue, string method, string? body)
     {
         using (var client = new WebClient())
         {
@@ -278,27 +289,37 @@ internal sealed class UnnamedTrackingSyncClient
             SortTitle = string.IsNullOrWhiteSpace(game.SortingName) ? game.Name ?? string.Empty : game.SortingName,
             Description = game.Description ?? string.Empty,
             ReleaseDate = game.ReleaseDate.HasValue && game.ReleaseDate.Value.Year > 0 ? game.ReleaseDate.Value.Date.ToString("yyyy-MM-dd") : null,
-            Developer = JoinNames(game.Developers), Publisher = JoinNames(game.Publishers), Series = JoinNames(game.Series),
+            Developer = JoinNames(game.Developers),
+            Publisher = JoinNames(game.Publishers),
+            Series = JoinNames(game.Series),
             Tags = tags.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Features = OrEmpty(game.Features).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Collections = OrEmpty(game.Series).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Links = OrEmpty(game.Links).Where(x => x != null && !string.IsNullOrWhiteSpace(x.Url)).Select(x => new UnnamedTrackingSyncLink { Label = string.IsNullOrWhiteSpace(x.Name) ? "Playnite link" : x.Name, Url = x.Url }).ToList(),
-            Source = game.Source?.Name ?? string.Empty, AgeRating = JoinNames(game.AgeRatings), Favorite = game.Favorite, Notes = game.Notes ?? string.Empty,
+            Source = game.Source?.Name ?? string.Empty,
+            AgeRating = JoinNames(game.AgeRatings),
+            Favorite = game.Favorite,
+            Notes = game.Notes ?? string.Empty,
             PlaytimeSeconds = game.Playtime > long.MaxValue ? long.MaxValue : (long)game.Playtime,
             RatingOverall = game.UserScore.HasValue ? game.UserScore.Value / 10m : (decimal?)null,
-            Status = MapStatus(game), FolderLocation = GetFolderLocation(game), PlayniteGuid = game.Id
+            Status = MapStatus(game),
+            FolderLocation = GetFolderLocation(game),
+            PlayniteGuid = game.Id
         };
     }
 
     private static string GetFolderLocation(Game game)
     {
-        var invalid = Path.GetInvalidFileNameChars(); var builder = new StringBuilder();
+        var invalid = Path.GetInvalidFileNameChars();
+        var builder = new StringBuilder();
         foreach (var character in game.Name ?? "Unnamed Game") builder.Append(invalid.Contains(character) || character == '/' || character == '\\' ? '_' : character);
         var safeName = builder.ToString().Trim().TrimEnd('.');
         if (string.IsNullOrWhiteSpace(safeName)) safeName = "Unnamed Game";
         if (safeName.Length > 100) safeName = safeName.Substring(0, 100).TrimEnd(' ', '.');
         return $"playnite-{safeName}-{game.Id:N}";
     }
+
+    private static string GetLegacyFolderLocation(Guid gameId) => "playnite-" + gameId.ToString("N");
 
     private static string GetSafeExtension(string fileName)
     {
