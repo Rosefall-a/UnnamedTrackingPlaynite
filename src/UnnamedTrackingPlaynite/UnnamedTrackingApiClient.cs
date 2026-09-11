@@ -166,7 +166,7 @@ public sealed class UnnamedTrackingApiClient
                 continue;
             }
 
-            string operation;
+            string operation = "Prepare";
             try
             {
                 LogNullCollections(game);
@@ -194,12 +194,12 @@ public sealed class UnnamedTrackingApiClient
                 {
                     GameName = game.Name ?? "<unnamed game>",
                     GameId = game.Id,
-                    Operation = operation ?? "Sync",
+                    Operation = operation,
                     StatusCode = ex.StatusCode,
                     ResponseBody = ex.ResponseBody
                 });
 
-                logger.Error($"Failed to {operation?.ToLowerInvariant() ?? "sync"} Unnamed Tracking game '{game.Name}' ({game.Id}) with HTTP {ex.StatusCode}: {ex.ResponseBody}");
+                logger.Error($"Failed to {operation.ToLowerInvariant()} Unnamed Tracking game '{game.Name}' ({game.Id}) with HTTP {ex.StatusCode}: {ex.ResponseBody}");
             }
             catch (Exception ex)
             {
@@ -207,11 +207,11 @@ public sealed class UnnamedTrackingApiClient
                 {
                     GameName = game.Name ?? "<unnamed game>",
                     GameId = game.Id,
-                    Operation = operation ?? "Prepare",
+                    Operation = operation,
                     ResponseBody = ex.Message
                 });
 
-                logger.Error($"Failed to prepare/sync Unnamed Tracking game '{game.Name}' ({game.Id}): {ex}");
+                logger.Error($"Failed to {operation.ToLowerInvariant()} Unnamed Tracking game '{game.Name}' ({game.Id}): {ex}");
             }
         }
 
