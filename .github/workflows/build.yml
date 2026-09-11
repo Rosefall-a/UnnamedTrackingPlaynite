@@ -1,0 +1,40 @@
+name: Build plugin
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Restore
+        run: dotnet restore UnnamedTrackingPlaynite.sln
+
+      - name: Build
+        run: dotnet build UnnamedTrackingPlaynite.sln --configuration Release --no-restore
+
+      - name: Verify extension manifest
+        shell: pwsh
+        run: |
+          $manifest = "src/UnnamedTrackingPlaynite/bin/Release/net462/extension.yaml"
+          if (-not (Test-Path $manifest)) {
+            throw "Build did not produce extension.yaml"
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unnamed-tracking-playnite
+          path: src/UnnamedTrackingPlaynite/bin/Release/net462/
