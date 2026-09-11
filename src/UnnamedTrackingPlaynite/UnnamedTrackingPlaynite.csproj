@@ -16,6 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="System.Web.Extensions" />
     <None Include="extension.yaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
