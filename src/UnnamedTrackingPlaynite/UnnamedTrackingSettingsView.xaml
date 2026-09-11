@@ -5,5 +5,12 @@
         <TextBlock Text="Authentication token" FontWeight="SemiBold" />
         <TextBox Margin="0,5,0,12" Text="{Binding AuthValue, UpdateSourceTrigger=PropertyChanged}" />
         <TextBlock Text="The authentication token is stored with this Playnite extension's settings." TextWrapping="Wrap" Opacity="0.7" />
+
+        <Separator Margin="0,15,0,15" />
+
+        <TextBlock Text="Library sync" FontWeight="SemiBold" />
+        <TextBlock Margin="0,5,0,10" Text="Manually upload your current Playnite game library to Unnamed Tracking." TextWrapping="Wrap" Opacity="0.7" />
+        <Button x:Name="UploadButton" Content="Upload Playnite Library" Width="180" HorizontalAlignment="Left" Click="UploadButton_Click" />
+        <TextBlock x:Name="UploadStatus" Margin="0,8,0,0" TextWrapping="Wrap" Opacity="0.8" />
     </StackPanel>
 </UserControl>
