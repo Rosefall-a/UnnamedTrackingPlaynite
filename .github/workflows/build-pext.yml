@@ -1,0 +1,78 @@
+name: Build Playnite extension
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Restore
+        run: dotnet restore src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj
+
+      - name: Build
+        run: dotnet build src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj --configuration Release --no-restore
+
+      - name: Package PEXT
+        shell: pwsh
+        run: |
+          $projectDir = Join-Path $env:GITHUB_WORKSPACE 'src/UnnamedTrackingPlaynite'
+          $outputDir = Join-Path $projectDir 'bin/Release/net462'
+          $packageDir = Join-Path $env:RUNNER_TEMP 'pext'
+
+          if (-not (Test-Path $outputDir)) {
+            throw "Build output directory was not found: $outputDir"
+          }
+
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          Copy-Item (Join-Path $outputDir 'UnnamedTrackingPlaynite.dll') $packageDir
+          Copy-Item (Join-Path $projectDir 'extension.yaml') $packageDir
+
+          $versionLine = Get-Content (Join-Path $projectDir 'extension.yaml') |
+            Where-Object { $_ -match '^Version:\s*(.+)$' } |
+            Select-Object -First 1
+          if (-not $versionLine) {
+            throw 'Could not determine extension version from extension.yaml.'
+          }
+
+          $version = ($versionLine -replace '^Version:\s*', '').Trim()
+          $packagePath = Join-Path $env:GITHUB_WORKSPACE "UnnamedTrackingPlaynite-$version.pext"
+
+          Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $packagePath -Force
+          Write-Host "Created $packagePath"
+
+      - name: Upload PEXT artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnnamedTrackingPlaynite-PEXT
+          path: UnnamedTrackingPlaynite-*.pext
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish dev release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-build-${{ github.run_number }}
+          name: Dev Build #${{ github.run_number }}
+          prerelease: true
+          generate_release_notes: false
+          files: UnnamedTrackingPlaynite-*.pext
