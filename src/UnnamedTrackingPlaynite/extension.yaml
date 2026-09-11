@@ -1,0 +1,9 @@
+Id: UnnamedTrackingPlaynite
+Name: Unnamed Tracking
+Author: Rosefall-a
+Version: 0.1.0
+Module: UnnamedTrackingPlaynite.dll
+Type: GenericPlugin
+Links:
+    - Name: Source
+      Url: https://github.com/Rosefall-a/UnnamedTrackingPlaynite
