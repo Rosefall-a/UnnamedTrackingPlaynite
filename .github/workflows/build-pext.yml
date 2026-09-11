@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -59,10 +59,20 @@ jobs:
           Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $packagePath -Force
           Write-Host "Created $packagePath"
 
-      - name: Upload PEXT
+      - name: Upload PEXT artifact
         uses: actions/upload-artifact@v4
         with:
           name: UnnamedTrackingPlaynite-PEXT
           path: UnnamedTrackingPlaynite-*.pext
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish dev release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-build-${{ github.run_number }}
+          name: Dev Build #${{ github.run_number }}
+          prerelease: true
+          generate_release_notes: false
+          files: UnnamedTrackingPlaynite-*.pext
