@@ -310,12 +310,32 @@ internal sealed class UnnamedTrackingSyncClient
 
     private static string GetFolderLocation(Game game)
     {
-        var invalid = Path.GetInvalidFileNameChars();
         var builder = new StringBuilder();
-        foreach (var character in game.Name ?? "Unnamed Game") builder.Append(invalid.Contains(character) || character == '/' || character == '\\' ? '_' : character);
-        var safeName = builder.ToString().Trim().TrimEnd('.');
-        if (string.IsNullOrWhiteSpace(safeName)) safeName = "Unnamed Game";
-        if (safeName.Length > 100) safeName = safeName.Substring(0, 100).TrimEnd(' ', '.');
+
+        foreach (var character in game.Name ?? "Unnamed Game")
+        {
+            var allowed =
+                (character >= 'A' && character <= 'Z') ||
+                (character >= 'a' && character <= 'z') ||
+                (character >= '0' && character <= '9') ||
+                character == '_' ||
+                character == '-';
+
+            builder.Append(allowed ? character : '_');
+        }
+
+        var safeName = builder.ToString().Trim('_');
+
+        if (string.IsNullOrWhiteSpace(safeName))
+        {
+            safeName = "Unnamed_Game";
+        }
+
+        if (safeName.Length > 100)
+        {
+            safeName = safeName.Substring(0, 100).Trim('_');
+        }
+
         return $"playnite-{safeName}-{game.Id:N}";
     }
 
