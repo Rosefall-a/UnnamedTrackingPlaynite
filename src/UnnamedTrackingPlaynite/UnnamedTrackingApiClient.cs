@@ -78,7 +78,29 @@ public sealed class UnnamedTrackingApiClient
         }
 
         var endpoint = apiUrl.TrimEnd('/') + ImportLibraryPath;
-        var payload = games.Select(ToGamePayload).ToList();
+        var payload = new List<UnnamedTrackingGamePayload>();
+        var sourceGames = games ?? Enumerable.Empty<Game>();
+
+        foreach (var game in sourceGames)
+        {
+            if (game == null)
+            {
+                logger.Error("Unnamed Tracking encountered a null Playnite game while preparing the library upload.");
+                continue;
+            }
+
+            try
+            {
+                LogNullCollections(game);
+                payload.Add(ToGamePayload(game));
+            }
+            catch (Exception ex)
+            {
+                logger.Error($"Failed to prepare Playnite game '{game.Name}' ({game.Id}) for Unnamed Tracking upload: {ex}");
+                throw;
+            }
+        }
+
         var json = Serialize(payload);
 
         using (var client = new WebClient())
@@ -110,7 +132,7 @@ public sealed class UnnamedTrackingApiClient
                     statusCode = (int)response.StatusCode;
                 }
 
-                logger.Error($"Unnamed Tracking library upload failed with HTTP {statusCode}.");
+                logger.Error($"Unnamed Tracking library upload failed with HTTP {statusCode}: {ex}");
                 throw new InvalidOperationException(
                     statusCode > 0
                         ? $"The server returned HTTP {statusCode}."
@@ -132,17 +154,17 @@ public sealed class UnnamedTrackingApiClient
 
     private static UnnamedTrackingGamePayload ToGamePayload(Game game)
     {
-        var tags = game.Tags
+        var tags = OrEmpty(game.Tags)
             .Select(tag => tag.Name ?? string.Empty)
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .ToList();
 
-        tags.AddRange(game.Genres
+        tags.AddRange(OrEmpty(game.Genres)
             .Select(genre => genre.Name ?? string.Empty)
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Select(name => $"Genre: {name}"));
 
-        tags.AddRange(game.Platforms
+        tags.AddRange(OrEmpty(game.Platforms)
             .Select(platform => platform.Name ?? string.Empty)
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Select(name => $"Platform: {name}"));
@@ -157,18 +179,18 @@ public sealed class UnnamedTrackingApiClient
             Publisher = JoinNames(game.Publishers),
             Series = JoinNames(game.Series),
             Tags = tags.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            Features = game.Features
+            Features = OrEmpty(game.Features)
                 .Select(feature => feature.Name ?? string.Empty)
                 .Where(name => !string.IsNullOrWhiteSpace(name))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList(),
-            Collections = game.Series
+            Collections = OrEmpty(game.Series)
                 .Select(series => series.Name ?? string.Empty)
                 .Where(name => !string.IsNullOrWhiteSpace(name))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList(),
-            Links = game.Links
-                .Where(link => !string.IsNullOrWhiteSpace(link.Url))
+            Links = OrEmpty(game.Links)
+                .Where(link => link != null && !string.IsNullOrWhiteSpace(link.Url))
                 .Select(link => new UnnamedTrackingLinkPayload
                 {
                     Label = string.IsNullOrWhiteSpace(link.Name) ? "Playnite link" : link.Name ?? "Playnite link",
@@ -188,9 +210,34 @@ public sealed class UnnamedTrackingApiClient
         };
     }
 
-    private static string? JoinNames<T>(IEnumerable<T> values) where T : DatabaseObject
+    private void LogNullCollections(Game game)
     {
-        var names = values
+        var nullCollections = new List<string>();
+
+        if (game.Tags == null) nullCollections.Add(nameof(game.Tags));
+        if (game.Genres == null) nullCollections.Add(nameof(game.Genres));
+        if (game.Platforms == null) nullCollections.Add(nameof(game.Platforms));
+        if (game.Features == null) nullCollections.Add(nameof(game.Features));
+        if (game.Developers == null) nullCollections.Add(nameof(game.Developers));
+        if (game.Publishers == null) nullCollections.Add(nameof(game.Publishers));
+        if (game.Series == null) nullCollections.Add(nameof(game.Series));
+        if (game.Links == null) nullCollections.Add(nameof(game.Links));
+        if (game.AgeRatings == null) nullCollections.Add(nameof(game.AgeRatings));
+
+        if (nullCollections.Count > 0)
+        {
+            logger.Info($"Playnite game '{game.Name}' ({game.Id}) has null metadata collections: {string.Join(", ", nullCollections)}. Treating them as empty.");
+        }
+    }
+
+    private static IEnumerable<T> OrEmpty<T>(IEnumerable<T>? source)
+    {
+        return source ?? Enumerable.Empty<T>();
+    }
+
+    private static string? JoinNames<T>(IEnumerable<T>? values) where T : DatabaseObject
+    {
+        var names = OrEmpty(values)
             .Where(value => value != null && !string.IsNullOrWhiteSpace(value.Name))
             .Select(value => value.Name ?? string.Empty)
             .Where(name => !string.IsNullOrWhiteSpace(name))
