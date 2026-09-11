@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 18
-VisualStudioVersion = 18.5.11716.220 stable
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnnamedTrackingPlaynite", "src\UnnamedTrackingPlaynite\UnnamedTrackingPlaynite.csproj", "{B9F0D0B7-2B7C-4F3E-B4A8-2E6D6A8B9E3F}"
 EndProject
@@ -14,11 +14,5 @@ Global
 		{B9F0D0B7-2B7C-4F3E-B4A8-2E6D6A8B9E3F}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B9F0D0B7-2B7C-4F3E-B4A8-2E6D6A8B9E3F}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B9F0D0B7-2B7C-4F3E-B4A8-2E6D6A8B9E3F}.Release|Any CPU.Build.0 = Release|Any CPU
-	EndGlobalSection
-	GlobalSection(SolutionProperties) = preSolution
-		HideSolutionNode = FALSE
-	EndGlobalSection
-	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {2477324A-2C99-45AA-B1A9-89F9CC3EF5B5}
 	EndGlobalSection
 EndGlobal
