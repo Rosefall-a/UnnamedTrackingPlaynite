@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Headers;
+using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using Playnite.SDK;
@@ -46,33 +45,41 @@ public sealed class UnnamedTrackingApiClient
         var payload = games.Select(ToGamePayload).ToList();
         var json = Serialization.ToJson(payload);
 
-        using (var client = new HttpClient())
-        using (var request = new HttpRequestMessage(HttpMethod.Post, endpoint))
+        using (var client = new WebClient())
         {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", authValue);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            client.Headers[HttpRequestHeader.Authorization] = "Bearer " + authValue;
+            client.Headers[HttpRequestHeader.Accept] = "application/json";
+            client.Headers[HttpRequestHeader.ContentType] = "application/json; charset=utf-8";
 
             logger.Info($"Uploading {payload.Count} Playnite games to Unnamed Tracking.");
 
-            using (var response = await client.SendAsync(request).ConfigureAwait(false))
+            try
             {
-                var responseBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    logger.Error($"Unnamed Tracking library upload failed with HTTP {(int)response.StatusCode}.");
-                    throw new HttpRequestException(
-                        $"The server returned HTTP {(int)response.StatusCode} ({response.ReasonPhrase}).");
-                }
+                var responseBody = await client.UploadStringTaskAsync(endpoint, "POST", json).ConfigureAwait(false);
 
                 logger.Info("Unnamed Tracking library upload completed successfully.");
 
                 return new UnnamedTrackingUploadResult
                 {
-                    StatusCode = (int)response.StatusCode,
+                    StatusCode = 200,
                     ResponseBody = responseBody
                 };
+            }
+            catch (WebException ex)
+            {
+                var statusCode = 0;
+                var response = ex.Response as HttpWebResponse;
+                if (response != null)
+                {
+                    statusCode = (int)response.StatusCode;
+                }
+
+                logger.Error($"Unnamed Tracking library upload failed with HTTP {statusCode}.");
+                throw new InvalidOperationException(
+                    statusCode > 0
+                        ? $"The server returned HTTP {statusCode}."
+                        : "The Unnamed Tracking server could not be reached.",
+                    ex);
             }
         }
     }
