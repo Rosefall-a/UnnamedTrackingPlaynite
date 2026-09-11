@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
+using System.Text;
 using System.Threading.Tasks;
-using System.Web.Script.Serialization;
 using Playnite.SDK;
 using Playnite.SDK.Models;
 
@@ -13,6 +16,39 @@ public sealed class UnnamedTrackingUploadResult
 {
     public int StatusCode { get; set; }
     public string ResponseBody { get; set; } = string.Empty;
+}
+
+[DataContract]
+internal sealed class UnnamedTrackingGamePayload
+{
+    [DataMember(Name = "title")] public string Title { get; set; } = string.Empty;
+    [DataMember(Name = "sort_title")] public string SortTitle { get; set; } = string.Empty;
+    [DataMember(Name = "description")] public string Description { get; set; } = string.Empty;
+    [DataMember(Name = "release_date")] public string? ReleaseDate { get; set; }
+    [DataMember(Name = "developer")] public string? Developer { get; set; }
+    [DataMember(Name = "publisher")] public string? Publisher { get; set; }
+    [DataMember(Name = "series")] public string? Series { get; set; }
+    [DataMember(Name = "tags")] public List<string> Tags { get; set; } = new List<string>();
+    [DataMember(Name = "features")] public List<string> Features { get; set; } = new List<string>();
+    [DataMember(Name = "collections")] public List<string> Collections { get; set; } = new List<string>();
+    [DataMember(Name = "links")] public List<UnnamedTrackingLinkPayload> Links { get; set; } = new List<UnnamedTrackingLinkPayload>();
+    [DataMember(Name = "source")] public string Source { get; set; } = string.Empty;
+    [DataMember(Name = "age_rating")] public string? AgeRating { get; set; }
+    [DataMember(Name = "favorite")] public bool Favorite { get; set; }
+    [DataMember(Name = "notes")] public string Notes { get; set; } = string.Empty;
+    [DataMember(Name = "playtime_seconds")] public int PlaytimeSeconds { get; set; }
+    [DataMember(Name = "rating_overall")] public decimal? RatingOverall { get; set; }
+    [DataMember(Name = "status")] public string Status { get; set; } = string.Empty;
+    [DataMember(Name = "folder_location")] public string FolderLocation { get; set; } = string.Empty;
+    [DataMember(Name = "profiles_enabled")] public bool ProfilesEnabled { get; set; }
+    [DataMember(Name = "osrs_stats_enabled")] public bool OsrsStatsEnabled { get; set; }
+}
+
+[DataContract]
+internal sealed class UnnamedTrackingLinkPayload
+{
+    [DataMember(Name = "label")] public string Label { get; set; } = string.Empty;
+    [DataMember(Name = "url")] public string Url { get; set; } = string.Empty;
 }
 
 public sealed class UnnamedTrackingApiClient
@@ -43,7 +79,7 @@ public sealed class UnnamedTrackingApiClient
 
         var endpoint = apiUrl.TrimEnd('/') + ImportLibraryPath;
         var payload = games.Select(ToGamePayload).ToList();
-        var json = new JavaScriptSerializer().Serialize(payload);
+        var json = Serialize(payload);
 
         using (var client = new WebClient())
         {
@@ -84,7 +120,17 @@ public sealed class UnnamedTrackingApiClient
         }
     }
 
-    private static Dictionary<string, object> ToGamePayload(Game game)
+    private static string Serialize(List<UnnamedTrackingGamePayload> payload)
+    {
+        var serializer = new DataContractJsonSerializer(typeof(List<UnnamedTrackingGamePayload>));
+        using (var stream = new MemoryStream())
+        {
+            serializer.WriteObject(stream, payload);
+            return Encoding.UTF8.GetString(stream.ToArray());
+        }
+    }
+
+    private static UnnamedTrackingGamePayload ToGamePayload(Game game)
     {
         var tags = game.Tags
             .Select(tag => tag.Name ?? string.Empty)
@@ -101,44 +147,44 @@ public sealed class UnnamedTrackingApiClient
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Select(name => $"Platform: {name}"));
 
-        return new Dictionary<string, object>
+        return new UnnamedTrackingGamePayload
         {
-            ["title"] = game.Name ?? string.Empty,
-            ["sort_title"] = string.IsNullOrWhiteSpace(game.SortingName) ? game.Name ?? string.Empty : game.SortingName ?? string.Empty,
-            ["description"] = game.Description ?? string.Empty,
-            ["release_date"] = GetReleaseDate(game.ReleaseDate),
-            ["developer"] = JoinNames(game.Developers),
-            ["publisher"] = JoinNames(game.Publishers),
-            ["series"] = JoinNames(game.Series),
-            ["tags"] = tags.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            ["features"] = game.Features
+            Title = game.Name ?? string.Empty,
+            SortTitle = string.IsNullOrWhiteSpace(game.SortingName) ? game.Name ?? string.Empty : game.SortingName ?? string.Empty,
+            Description = game.Description ?? string.Empty,
+            ReleaseDate = GetReleaseDate(game.ReleaseDate),
+            Developer = JoinNames(game.Developers),
+            Publisher = JoinNames(game.Publishers),
+            Series = JoinNames(game.Series),
+            Tags = tags.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            Features = game.Features
                 .Select(feature => feature.Name ?? string.Empty)
                 .Where(name => !string.IsNullOrWhiteSpace(name))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList(),
-            ["collections"] = game.Series
+            Collections = game.Series
                 .Select(series => series.Name ?? string.Empty)
                 .Where(name => !string.IsNullOrWhiteSpace(name))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList(),
-            ["links"] = game.Links
+            Links = game.Links
                 .Where(link => !string.IsNullOrWhiteSpace(link.Url))
-                .Select(link => new Dictionary<string, object>
+                .Select(link => new UnnamedTrackingLinkPayload
                 {
-                    ["label"] = string.IsNullOrWhiteSpace(link.Name) ? "Playnite link" : link.Name ?? "Playnite link",
-                    ["url"] = link.Url ?? string.Empty
+                    Label = string.IsNullOrWhiteSpace(link.Name) ? "Playnite link" : link.Name ?? "Playnite link",
+                    Url = link.Url ?? string.Empty
                 })
                 .ToList(),
-            ["source"] = game.Source?.Name ?? string.Empty,
-            ["age_rating"] = JoinNames(game.AgeRatings),
-            ["favorite"] = game.Favorite,
-            ["notes"] = game.Notes ?? string.Empty,
-            ["playtime_seconds"] = game.Playtime,
-            ["rating_overall"] = game.UserScore.HasValue ? game.UserScore.Value / 10m : (decimal?)null,
-            ["status"] = MapStatus(game),
-            ["folder_location"] = $"playnite-{game.Id:N}",
-            ["profiles_enabled"] = false,
-            ["osrs_stats_enabled"] = false
+            Source = game.Source?.Name ?? string.Empty,
+            AgeRating = JoinNames(game.AgeRatings),
+            Favorite = game.Favorite,
+            Notes = game.Notes ?? string.Empty,
+            PlaytimeSeconds = game.Playtime,
+            RatingOverall = game.UserScore.HasValue ? game.UserScore.Value / 10m : (decimal?)null,
+            Status = MapStatus(game),
+            FolderLocation = $"playnite-{game.Id:N}",
+            ProfilesEnabled = false,
+            OsrsStatsEnabled = false
         };
     }
 
