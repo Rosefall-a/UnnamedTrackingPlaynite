@@ -65,7 +65,10 @@ public partial class UnnamedTrackingSettingsView : UserControl
 
             var status = failure.StatusCode > 0 ? $"HTTP {failure.StatusCode}" : "No HTTP status";
             builder.AppendLine($"    {failure.Operation} failed ({status}):");
-            builder.AppendLine($"      {string.IsNullOrWhiteSpace(failure.ResponseBody) ? "<empty server response>" : failure.ResponseBody.Trim()}");
+            var responseBody = string.IsNullOrWhiteSpace(failure.ResponseBody)
+                ? "<empty server response>"
+                : failure.ResponseBody.Trim();
+            builder.AppendLine($"      {responseBody}");
         }
 
         return builder.ToString();
