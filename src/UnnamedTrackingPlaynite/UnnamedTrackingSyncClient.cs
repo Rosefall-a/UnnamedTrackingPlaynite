@@ -258,18 +258,35 @@ internal sealed class UnnamedTrackingSyncClient
 
     private async Task<string> SendJsonAsync(string endpoint, string authValue, string method, string? body)
     {
-        using (var client = new WebClient())
+        var request = (HttpWebRequest)WebRequest.Create(endpoint);
+        request.Method = method;
+        request.Accept = "application/json";
+        request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+        request.KeepAlive = false;
+        request.Expect = null;
+        request.Headers[HttpRequestHeader.Authorization] = "Bearer " + authValue;
+
+        if (body != null)
         {
-            client.Headers[HttpRequestHeader.Authorization] = "Bearer " + authValue;
-            client.Headers[HttpRequestHeader.Accept] = "application/json";
-            if (body != null) client.Headers[HttpRequestHeader.ContentType] = "application/json; charset=utf-8";
-            try
+            var bodyBytes = Encoding.UTF8.GetBytes(body);
+            request.ContentType = "application/json; charset=utf-8";
+            request.ContentLength = bodyBytes.Length;
+            using (var requestStream = await request.GetRequestStreamAsync().ConfigureAwait(false))
             {
-                if (method == "GET") return await client.DownloadStringTaskAsync(endpoint).ConfigureAwait(false);
-                return await client.UploadStringTaskAsync(endpoint, method, body ?? string.Empty).ConfigureAwait(false);
+                await requestStream.WriteAsync(bodyBytes, 0, bodyBytes.Length).ConfigureAwait(false);
             }
-            catch (WebException ex) { throw ToApiException(ex); }
         }
+
+        try
+        {
+            using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+            using (var stream = response.GetResponseStream())
+            using (var reader = new StreamReader(stream ?? Stream.Null, Encoding.UTF8))
+            {
+                return await reader.ReadToEndAsync().ConfigureAwait(false);
+            }
+        }
+        catch (WebException ex) { throw ToApiException(ex); }
     }
 
     private static UnnamedTrackingSyncApiException ToApiException(WebException ex)
@@ -355,7 +372,6 @@ internal sealed class UnnamedTrackingSyncClient
 
         var safeName = builder.ToString().Trim('_');
         if (string.IsNullOrWhiteSpace(safeName)) safeName = "Unnamed_Game";
-
 
         if (safeName.Length > 100)
         {
