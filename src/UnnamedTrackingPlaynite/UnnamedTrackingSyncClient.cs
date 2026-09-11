@@ -355,15 +355,7 @@ internal sealed class UnnamedTrackingSyncClient
 
         var safeName = builder.ToString().Trim('_');
         if (string.IsNullOrWhiteSpace(safeName)) safeName = "Unnamed_Game";
-<<<<<<< HEAD
 
-        if (string.IsNullOrWhiteSpace(safeName))
-        {
-            safeName = "Unnamed_Game";
-        }
-=======
-        if (string.IsNullOrWhiteSpace(safeName)) safeName = "Unnamed_Game";
->>>>>>> b7689e5f252677142b6f619d494a486cd99f6cb5
 
         if (safeName.Length > 100)
         {
