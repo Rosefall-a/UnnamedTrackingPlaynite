@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Windows.Controls;
 using Playnite.SDK;
 using Playnite.SDK.Events;
 using Playnite.SDK.Plugins;
@@ -12,18 +13,36 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
     private readonly ILogger _logger;
 
+    public UnnamedTrackingSettings Settings { get; }
+
     public UnnamedTrackingPlugin(IPlayniteAPI api) : base(api)
     {
+        Properties = new GenericPluginProperties
+        {
+            HasSettings = true
+        };
+
         _logger = LogManager.GetLogger();
+        Settings = new UnnamedTrackingSettings(this);
     }
 
     public override IEnumerable<MainMenuItem> GetMainMenuItems(GetMainMenuItemsArgs args)
     {
         yield return new MainMenuItem
-        {
+         {
             Description = "Unnamed Tracking",
             MenuSection = "@"
         };
+    }
+
+    public override ISettings GetSettings(bool firstRunSettings)
+    {
+        return Settings;
+    }
+
+    public override UserControl GetSettingsView(bool firstRunView)
+    {
+        return new UnnamedTrackingSettingsView();
     }
 
     public override void OnApplicationStarted(OnApplicationStartedEventArgs args)
