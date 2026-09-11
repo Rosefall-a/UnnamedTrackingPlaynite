@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -20,20 +21,53 @@ public partial class UnnamedTrackingSettingsView : UserControl
         }
 
         UploadButton.IsEnabled = false;
-        UploadStatus.Text = "Uploading Playnite library...";
+        UploadStatus.Text = "Syncing Playnite library...";
 
         try
         {
-            await settings.UploadLibraryAsync();
-            UploadStatus.Text = "Library upload completed successfully.";
+            var result = await settings.UploadLibraryAsync();
+            UploadStatus.Text = FormatResult(result);
         }
         catch (Exception ex)
         {
-            UploadStatus.Text = $"Upload failed: {ex.Message}";
+            UploadStatus.Text = $"Library sync could not be started: {ex.Message}";
         }
         finally
         {
             UploadButton.IsEnabled = true;
         }
+    }
+
+    private static string FormatResult(UnnamedTrackingUploadResult result)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("Library sync complete");
+        builder.AppendLine();
+        builder.AppendLine($"Total: {result.TotalGames}");
+        builder.AppendLine($"Succeeded: {result.SucceededGames}");
+        builder.AppendLine($"Failed: {result.FailedGames}");
+
+        if (result.FailedGames == 0)
+        {
+            return builder.ToString();
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("Failed:");
+
+        foreach (var failure in result.Failures)
+        {
+            builder.AppendLine($"  {failure.GameName}");
+            if (failure.GameId.HasValue)
+            {
+                builder.AppendLine($"    Playnite ID: {failure.GameId.Value}");
+            }
+
+            var status = failure.StatusCode > 0 ? $"HTTP {failure.StatusCode}" : "No HTTP status";
+            builder.AppendLine($"    {failure.Operation} failed ({status}):");
+            builder.AppendLine($"      {string.IsNullOrWhiteSpace(failure.ResponseBody) ? "<empty server response>" : failure.ResponseBody.Trim()}");
+        }
+
+        return builder.ToString();
     }
 }
