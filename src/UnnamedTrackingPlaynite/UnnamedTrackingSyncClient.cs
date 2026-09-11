@@ -216,7 +216,8 @@ internal sealed class UnnamedTrackingSyncClient
                 {
                     var response = await client.UploadFileTaskAsync(endpoint, "POST", tempPath).ConfigureAwait(false);
                     stopwatch.Stop();
-                    logger.Info($"Unnamed Tracking HTTP response {requestId}: POST {endpoint} -> success ({stopwatch.ElapsedMilliseconds} ms), body={response ?? string.Empty}");
+                    var responseBody = response == null ? string.Empty : Encoding.UTF8.GetString(response);
+                    logger.Info($"Unnamed Tracking HTTP response {requestId}: POST {endpoint} -> success ({stopwatch.ElapsedMilliseconds} ms), body={responseBody}");
                 }
                 catch (WebException ex)
                 {
