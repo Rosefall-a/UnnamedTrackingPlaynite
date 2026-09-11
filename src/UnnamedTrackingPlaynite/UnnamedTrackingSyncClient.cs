@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -198,6 +199,11 @@ internal sealed class UnnamedTrackingSyncClient
         string fileName;
         if (!TryReadPlayniteImage(imageReference, defaultFileName, imageKind, game, out imageData, out fileName)) return;
 
+        var endpoint = apiUrl.TrimEnd('/') + "/api/game/" + remoteGameId + "/assets/" + assetKind;
+        var requestId = Guid.NewGuid().ToString("N");
+        var stopwatch = Stopwatch.StartNew();
+        logger.Info($"Unnamed Tracking HTTP request {requestId}: POST {endpoint} [multipart upload, file='{fileName}', bytes={imageData.Length}]");
+
         var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + GetSafeExtension(fileName));
         File.WriteAllBytes(tempPath, imageData);
         try
@@ -208,9 +214,17 @@ internal sealed class UnnamedTrackingSyncClient
                 client.Headers[HttpRequestHeader.Accept] = "application/json";
                 try
                 {
-                    await client.UploadFileTaskAsync(apiUrl.TrimEnd('/') + "/api/game/" + remoteGameId + "/assets/" + assetKind, "POST", tempPath).ConfigureAwait(false);
+                    var response = await client.UploadFileTaskAsync(endpoint, "POST", tempPath).ConfigureAwait(false);
+                    stopwatch.Stop();
+                    logger.Info($"Unnamed Tracking HTTP response {requestId}: POST {endpoint} -> success ({stopwatch.ElapsedMilliseconds} ms), body={response ?? string.Empty}");
                 }
-                catch (WebException ex) { throw ToApiException(ex); }
+                catch (WebException ex)
+                {
+                    stopwatch.Stop();
+                    var apiException = ToApiException(ex);
+                    logger.Error($"Unnamed Tracking HTTP response {requestId}: POST {endpoint} -> HTTP {apiException.StatusCode} ({stopwatch.ElapsedMilliseconds} ms), body={apiException.ResponseBody}");
+                    throw apiException;
+                }
             }
         }
         finally { try { File.Delete(tempPath); } catch { } }
@@ -258,6 +272,16 @@ internal sealed class UnnamedTrackingSyncClient
 
     private async Task<string> SendJsonAsync(string endpoint, string authValue, string method, string? body)
     {
+        var requestId = Guid.NewGuid().ToString("N");
+        var stopwatch = Stopwatch.StartNew();
+        var bodyBytes = body == null ? Array.Empty<byte>() : Encoding.UTF8.GetBytes(body);
+
+        logger.Info($"Unnamed Tracking HTTP request {requestId}: {method} {endpoint} [content-type=application/json; charset=utf-8, bytes={bodyBytes.Length}, keep-alive=false, expect=false]");
+        if (body != null)
+        {
+            logger.Info($"Unnamed Tracking HTTP request {requestId} body: {body}");
+        }
+
         var request = (HttpWebRequest)WebRequest.Create(endpoint);
         request.Method = method;
         request.Accept = "application/json";
@@ -268,7 +292,6 @@ internal sealed class UnnamedTrackingSyncClient
 
         if (body != null)
         {
-            var bodyBytes = Encoding.UTF8.GetBytes(body);
             request.ContentType = "application/json; charset=utf-8";
             request.ContentLength = bodyBytes.Length;
             using (var requestStream = await request.GetRequestStreamAsync().ConfigureAwait(false))
@@ -283,10 +306,19 @@ internal sealed class UnnamedTrackingSyncClient
             using (var stream = response.GetResponseStream())
             using (var reader = new StreamReader(stream ?? Stream.Null, Encoding.UTF8))
             {
-                return await reader.ReadToEndAsync().ConfigureAwait(false);
+                var responseBody = await reader.ReadToEndAsync().ConfigureAwait(false);
+                stopwatch.Stop();
+                logger.Info($"Unnamed Tracking HTTP response {requestId}: {method} {endpoint} -> HTTP {(int)response.StatusCode} {response.StatusDescription} ({stopwatch.ElapsedMilliseconds} ms), content-type={response.ContentType ?? string.Empty}, bytes={response.ContentLength}, body={responseBody}");
+                return responseBody;
             }
         }
-        catch (WebException ex) { throw ToApiException(ex); }
+        catch (WebException ex)
+        {
+            stopwatch.Stop();
+            var apiException = ToApiException(ex);
+            logger.Error($"Unnamed Tracking HTTP response {requestId}: {method} {endpoint} -> HTTP {apiException.StatusCode} ({stopwatch.ElapsedMilliseconds} ms), body={apiException.ResponseBody}");
+            throw apiException;
+        }
     }
 
     private static UnnamedTrackingSyncApiException ToApiException(WebException ex)
