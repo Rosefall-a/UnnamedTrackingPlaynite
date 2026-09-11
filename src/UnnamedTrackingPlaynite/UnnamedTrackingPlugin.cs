@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Playnite.SDK;
+using Playnite.SDK.Events;
 using Playnite.SDK.Plugins;
 
 namespace UnnamedTrackingPlaynite;
@@ -13,7 +14,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
     public UnnamedTrackingPlugin(IPlayniteAPI api) : base(api)
     {
-        _logger = api.CreateLogger();
+        _logger = LogManager.GetLogger();
     }
 
     public override IEnumerable<MainMenuItem> GetMainMenuItems(GetMainMenuItemsArgs args)
@@ -25,7 +26,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         };
     }
 
-    public override void OnApplicationStarted()
+    public override void OnApplicationStarted(OnApplicationStartedEventArgs args)
     {
         _logger.Info("Unnamed Tracking plugin loaded.");
     }
