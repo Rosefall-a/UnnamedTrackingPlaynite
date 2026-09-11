@@ -13,7 +13,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
     public override Guid Id { get; } = Guid.Parse("4A8D9C7B-2E54-4A6B-9C6D-0A2B8F1E7D43");
 
     private readonly ILogger _logger;
-    private readonly UnnamedTrackingApiClient _apiClient;
+    private readonly UnnamedTrackingSyncClient _syncClient;
 
     public UnnamedTrackingSettings Settings { get; }
 
@@ -25,7 +25,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         };
 
         _logger = LogManager.GetLogger();
-        _apiClient = new UnnamedTrackingApiClient(_logger);
+        _syncClient = new UnnamedTrackingSyncClient(_logger, api);
         Settings = new UnnamedTrackingSettings(this);
     }
 
@@ -50,7 +50,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
     public Task<UnnamedTrackingUploadResult> UploadLibraryAsync()
     {
-        return _apiClient.UploadLibraryAsync(
+        return _syncClient.UploadLibraryAsync(
             Settings.ApiUrl,
             Settings.AuthValue,
             PlayniteApi.Database.Games);
