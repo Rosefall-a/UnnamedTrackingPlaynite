@@ -36,7 +36,7 @@ internal sealed class UnnamedTrackingGamePayload
     [DataMember(Name = "age_rating")] public string? AgeRating { get; set; }
     [DataMember(Name = "favorite")] public bool Favorite { get; set; }
     [DataMember(Name = "notes")] public string Notes { get; set; } = string.Empty;
-    [DataMember(Name = "playtime_seconds")] public int PlaytimeSeconds { get; set; }
+    [DataMember(Name = "playtime_seconds")] public ulong PlaytimeSeconds { get; set; }
     [DataMember(Name = "rating_overall")] public decimal? RatingOverall { get; set; }
     [DataMember(Name = "status")] public string Status { get; set; } = string.Empty;
     [DataMember(Name = "folder_location")] public string FolderLocation { get; set; } = string.Empty;
