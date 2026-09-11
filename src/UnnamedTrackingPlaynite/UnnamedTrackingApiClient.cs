@@ -104,7 +104,7 @@ public sealed class UnnamedTrackingApiClient
         return new Dictionary<string, object>
         {
             ["title"] = game.Name ?? string.Empty,
-            ["sort_title"] = string.IsNullOrWhiteSpace(game.SortingName) ? game.Name ?? string.Empty : game.SortingName,
+            ["sort_title"] = string.IsNullOrWhiteSpace(game.SortingName) ? game.Name ?? string.Empty : game.SortingName ?? string.Empty,
             ["description"] = game.Description ?? string.Empty,
             ["release_date"] = GetReleaseDate(game.ReleaseDate),
             ["developer"] = JoinNames(game.Developers),
@@ -125,7 +125,7 @@ public sealed class UnnamedTrackingApiClient
                 .Where(link => !string.IsNullOrWhiteSpace(link.Url))
                 .Select(link => new Dictionary<string, object>
                 {
-                    ["label"] = string.IsNullOrWhiteSpace(link.Name) ? "Playnite link" : link.Name,
+                    ["label"] = string.IsNullOrWhiteSpace(link.Name) ? "Playnite link" : link.Name ?? "Playnite link",
                     ["url"] = link.Url ?? string.Empty
                 })
                 .ToList(),
