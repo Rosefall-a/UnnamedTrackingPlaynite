@@ -34,6 +34,7 @@ internal sealed class UnnamedTrackingSyncGamePayload
     [DataMember(Name = "rating_overall")] public decimal? RatingOverall { get; set; }
     [DataMember(Name = "status")] public string Status { get; set; } = string.Empty;
     [DataMember(Name = "folder_location")] public string FolderLocation { get; set; } = string.Empty;
+    [DataMember(Name = "playnite_guid")] public Guid PlayniteGuid { get; set; }
 }
 
 [DataContract]
@@ -41,6 +42,7 @@ internal sealed class UnnamedTrackingSyncExistingGame
 {
     [DataMember(Name = "id")] public Guid Id { get; set; }
     [DataMember(Name = "folder_location")] public string FolderLocation { get; set; } = string.Empty;
+    [DataMember(Name = "playnite_guid")] public Guid? PlayniteGuid { get; set; }
 }
 
 [DataContract]
@@ -127,8 +129,12 @@ internal sealed class UnnamedTrackingSyncClient
             {
                 var payload = ToGamePayload(game);
                 UnnamedTrackingSyncExistingGame remote;
-                var found = existing.TryGetValue(payload.FolderLocation, out remote) ||
-                            existing.TryGetValue(GetLegacyFolderLocation(game.Id), out remote);
+                var found = existing.TryGetValue(payload.FolderLocation, out remote);
+                if (!found)
+                {
+                    found = existing.Values.FirstOrDefault(item => item.PlayniteGuid == game.Id) is UnnamedTrackingSyncExistingGame guidMatch;
+                    remote = guidMatch;
+                }
 
                 Guid remoteId;
                 if (found)
@@ -391,7 +397,8 @@ internal sealed class UnnamedTrackingSyncClient
             PlaytimeSeconds = game.Playtime > long.MaxValue ? long.MaxValue : (long)game.Playtime,
             RatingOverall = game.UserScore.HasValue ? game.UserScore.Value / 10m : (decimal?)null,
             Status = MapStatus(game),
-            FolderLocation = GetFolderLocation(game)
+            FolderLocation = GetFolderLocation(game),
+            PlayniteGuid = game.Id
         };
     }
 
