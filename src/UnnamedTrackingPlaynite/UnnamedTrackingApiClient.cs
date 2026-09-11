@@ -2,8 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
-using System.Text;
 using System.Threading.Tasks;
+using System.Web.Script.Serialization;
 using Playnite.SDK;
 using Playnite.SDK.Models;
 
@@ -43,7 +43,7 @@ public sealed class UnnamedTrackingApiClient
 
         var endpoint = apiUrl.TrimEnd('/') + ImportLibraryPath;
         var payload = games.Select(ToGamePayload).ToList();
-        var json = Serialization.ToJson(payload);
+        var json = new JavaScriptSerializer().Serialize(payload);
 
         using (var client = new WebClient())
         {
@@ -62,7 +62,7 @@ public sealed class UnnamedTrackingApiClient
                 return new UnnamedTrackingUploadResult
                 {
                     StatusCode = 200,
-                    ResponseBody = responseBody
+                    ResponseBody = responseBody ?? string.Empty
                 };
             }
             catch (WebException ex)
@@ -86,34 +86,53 @@ public sealed class UnnamedTrackingApiClient
 
     private static Dictionary<string, object> ToGamePayload(Game game)
     {
-        var tags = game.Tags.Select(tag => tag.Name).ToList();
-        tags.AddRange(game.Genres.Select(genre => $"Genre: {genre.Name}"));
-        tags.AddRange(game.Platforms.Select(platform => $"Platform: {platform.Name}"));
+        var tags = game.Tags
+            .Select(tag => tag.Name ?? string.Empty)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .ToList();
+
+        tags.AddRange(game.Genres
+            .Select(genre => genre.Name ?? string.Empty)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => $"Genre: {name}"));
+
+        tags.AddRange(game.Platforms
+            .Select(platform => platform.Name ?? string.Empty)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => $"Platform: {name}"));
 
         return new Dictionary<string, object>
         {
             ["title"] = game.Name ?? string.Empty,
             ["sort_title"] = string.IsNullOrWhiteSpace(game.SortingName) ? game.Name ?? string.Empty : game.SortingName,
-            ["description"] = game.Description,
+            ["description"] = game.Description ?? string.Empty,
             ["release_date"] = GetReleaseDate(game.ReleaseDate),
             ["developer"] = JoinNames(game.Developers),
             ["publisher"] = JoinNames(game.Publishers),
             ["series"] = JoinNames(game.Series),
             ["tags"] = tags.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            ["features"] = game.Features.Select(feature => feature.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            ["collections"] = game.Series.Select(series => series.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            ["features"] = game.Features
+                .Select(feature => feature.Name ?? string.Empty)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            ["collections"] = game.Series
+                .Select(series => series.Name ?? string.Empty)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
             ["links"] = game.Links
                 .Where(link => !string.IsNullOrWhiteSpace(link.Url))
                 .Select(link => new Dictionary<string, object>
                 {
                     ["label"] = string.IsNullOrWhiteSpace(link.Name) ? "Playnite link" : link.Name,
-                    ["url"] = link.Url
+                    ["url"] = link.Url ?? string.Empty
                 })
                 .ToList(),
-            ["source"] = game.Source?.Name,
+            ["source"] = game.Source?.Name ?? string.Empty,
             ["age_rating"] = JoinNames(game.AgeRatings),
             ["favorite"] = game.Favorite,
-            ["notes"] = game.Notes,
+            ["notes"] = game.Notes ?? string.Empty,
             ["playtime_seconds"] = game.Playtime,
             ["rating_overall"] = game.UserScore.HasValue ? game.UserScore.Value / 10m : (decimal?)null,
             ["status"] = MapStatus(game),
@@ -127,7 +146,8 @@ public sealed class UnnamedTrackingApiClient
     {
         var names = values
             .Where(value => value != null && !string.IsNullOrWhiteSpace(value.Name))
-            .Select(value => value.Name)
+            .Select(value => value.Name ?? string.Empty)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
