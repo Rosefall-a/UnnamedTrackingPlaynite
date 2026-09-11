@@ -137,8 +137,12 @@ internal sealed class UnnamedTrackingSyncClient
                     remoteId = await CreateGameAsync(apiUrl, authValue, payload).ConfigureAwait(false);
                 }
 
-                operation = "Artwork";
+                operation = "Artwork (key art)";
                 await UploadCoverIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+
+                operation = "Artwork (banner)";
+                await UploadBannerIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+
                 result.SucceededGames++;
             }
             catch (UnnamedTrackingSyncApiException ex)
@@ -178,11 +182,22 @@ internal sealed class UnnamedTrackingSyncClient
         return created.Id;
     }
 
-    private async Task UploadCoverIfAvailableAsync(string apiUrl, string authValue, Guid remoteGameId, Game game)
+    private Task UploadCoverIfAvailableAsync(string apiUrl, string authValue, Guid remoteGameId, Game game)
+    {
+        return UploadImageIfAvailableAsync(apiUrl, authValue, remoteGameId, game.CoverImage, "cover.png", "key_art", "cover", game);
+    }
+
+    private Task UploadBannerIfAvailableAsync(string apiUrl, string authValue, Guid remoteGameId, Game game)
+    {
+        return UploadImageIfAvailableAsync(apiUrl, authValue, remoteGameId, game.BackgroundImage, "banner.png", "banner", "banner", game);
+    }
+
+    private async Task UploadImageIfAvailableAsync(string apiUrl, string authValue, Guid remoteGameId, string imageReference, string defaultFileName, string assetKind, string imageKind, Game game)
     {
         byte[] imageData;
         string fileName;
-        if (!TryReadPlayniteCover(game, out imageData, out fileName)) return;
+        if (!TryReadPlayniteImage(imageReference, defaultFileName, imageKind, game, out imageData, out fileName)) return;
+
         var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + GetSafeExtension(fileName));
         File.WriteAllBytes(tempPath, imageData);
         try
@@ -191,39 +206,53 @@ internal sealed class UnnamedTrackingSyncClient
             {
                 client.Headers[HttpRequestHeader.Authorization] = "Bearer " + authValue;
                 client.Headers[HttpRequestHeader.Accept] = "application/json";
-                try { await client.UploadFileTaskAsync(apiUrl.TrimEnd('/') + "/api/game/" + remoteGameId + "/assets/key_art", "POST", tempPath).ConfigureAwait(false); }
+                try
+                {
+                    await client.UploadFileTaskAsync(apiUrl.TrimEnd('/') + "/api/game/" + remoteGameId + "/assets/" + assetKind, "POST", tempPath).ConfigureAwait(false);
+                }
                 catch (WebException ex) { throw ToApiException(ex); }
             }
         }
         finally { try { File.Delete(tempPath); } catch { } }
     }
 
-    private bool TryReadPlayniteCover(Game game, out byte[] data, out string fileName)
+    private bool TryReadPlayniteImage(string imageReference, string defaultFileName, string imageKind, Game game, out byte[] data, out string fileName)
     {
         data = Array.Empty<byte>();
-        fileName = "cover.png";
-        if (string.IsNullOrWhiteSpace(game.CoverImage)) return false;
+        fileName = defaultFileName;
+        if (string.IsNullOrWhiteSpace(imageReference)) return false;
+
         try
         {
-            var path = playniteApi.Database.GetFullFilePath(game.CoverImage);
+            var path = playniteApi.Database.GetFullFilePath(imageReference);
             if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
             {
-                data = File.ReadAllBytes(path); fileName = Path.GetFileName(path); return data.Length > 0;
+                data = File.ReadAllBytes(path);
+                fileName = Path.GetFileName(path);
+                return data.Length > 0;
             }
         }
-        catch (Exception ex) { logger.Info($"Could not read Playnite cover for '{game.Name}' ({game.Id}): {ex.Message}"); }
+        catch (Exception ex)
+        {
+            logger.Info($"Could not read Playnite {imageKind} for '{game.Name}' ({game.Id}): {ex.Message}");
+        }
 
-        if (Uri.TryCreate(game.CoverImage, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        if (Uri.TryCreate(imageReference, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
         {
             try
             {
                 using (var client = new WebClient()) data = client.DownloadData(uri);
                 fileName = Path.GetFileName(uri.AbsolutePath);
-                if (string.IsNullOrWhiteSpace(fileName) || !fileName.Contains(".")) fileName = "cover.png";
+                if (string.IsNullOrWhiteSpace(fileName) || !fileName.Contains(".")) fileName = defaultFileName;
                 return data.Length > 0;
             }
-            catch (Exception ex) { logger.Info($"Could not download Playnite cover for '{game.Name}' ({game.Id}): {ex.Message}"); }
+            catch (Exception ex)
+            {
+                logger.Info($"Could not download Playnite {imageKind} for '{game.Name}' ({game.Id}): {ex.Message}");
+            }
         }
+
         return false;
     }
 
@@ -310,12 +339,28 @@ internal sealed class UnnamedTrackingSyncClient
 
     private static string GetFolderLocation(Game game)
     {
-        var invalid = Path.GetInvalidFileNameChars();
         var builder = new StringBuilder();
-        foreach (var character in game.Name ?? "Unnamed Game") builder.Append(invalid.Contains(character) || character == '/' || character == '\\' ? '_' : character);
-        var safeName = builder.ToString().Trim().TrimEnd('.');
-        if (string.IsNullOrWhiteSpace(safeName)) safeName = "Unnamed Game";
-        if (safeName.Length > 100) safeName = safeName.Substring(0, 100).TrimEnd(' ', '.');
+
+        foreach (var character in game.Name ?? "Unnamed Game")
+        {
+            var allowed =
+                (character >= 'A' && character <= 'Z') ||
+                (character >= 'a' && character <= 'z') ||
+                (character >= '0' && character <= '9') ||
+                character == '_' ||
+                character == '-';
+
+            builder.Append(allowed ? character : '_');
+        }
+
+        var safeName = builder.ToString().Trim('_');
+        if (string.IsNullOrWhiteSpace(safeName)) safeName = "Unnamed_Game";
+
+        if (safeName.Length > 100)
+        {
+            safeName = safeName.Substring(0, 100).Trim('_');
+        }
+
         return $"playnite-{safeName}-{game.Id:N}";
     }
 
