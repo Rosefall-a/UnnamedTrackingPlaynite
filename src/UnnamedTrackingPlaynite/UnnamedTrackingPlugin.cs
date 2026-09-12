@@ -14,6 +14,8 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
     private readonly ILogger _logger;
     private readonly UnnamedTrackingSyncClient _syncClient;
+    private readonly UnnamedTrackingAfkClient _afkClient;
+    private readonly AfkTracker _afkTracker;
 
     public UnnamedTrackingSettings Settings { get; }
 
@@ -26,6 +28,8 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
         _logger = LogManager.GetLogger();
         _syncClient = new UnnamedTrackingSyncClient(_logger, api);
+        _afkClient = new UnnamedTrackingAfkClient(_logger);
+        _afkTracker = new AfkTracker();
         Settings = new UnnamedTrackingSettings(this);
     }
 
@@ -56,8 +60,34 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
             PlayniteApi.Database.Games);
     }
 
+    public override void OnGameStarted(OnGameStartedEventArgs args)
+    {
+        _afkTracker.Start();
+        _logger.Info($"Unnamed Tracking AFK tracking started for '{args.Game.Name}' ({args.Game.Id}).");
+    }
+
+    public override void OnGameStopped(OnGameStoppedEventArgs args)
+    {
+        var afkSeconds = _afkTracker.Stop();
+        if (afkSeconds <= 0) return;
+
+        var game = args.Game;
+        _logger.Info($"Unnamed Tracking recorded {afkSeconds} seconds of AFK time for '{game.Name}' ({game.Id}).");
+        _ = _afkClient.RecordAsync(Settings.ApiUrl, Settings.AuthValue, game.Id, afkSeconds);
+    }
+
     public override void OnApplicationStarted(OnApplicationStartedEventArgs args)
     {
         _logger.Info("Unnamed Tracking plugin loaded.");
+    }
+
+    public override void OnApplicationStopped(OnApplicationStoppedEventArgs args)
+    {
+        var afkSeconds = _afkTracker.Stop();
+        if (afkSeconds > 0 && PlayniteApi.Database.Games.Count > 0)
+        {
+            _logger.Info($"Unnamed Tracking application stopped with {afkSeconds} seconds of unreported AFK time.");
+        }
+        _afkTracker.Dispose();
     }
 }
