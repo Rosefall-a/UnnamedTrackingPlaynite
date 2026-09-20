@@ -37,7 +37,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         {
             Description = "Sync library to Unnamed Tracking",
             MenuSection = "@",
-            Action = _ => { _ = SyncLibraryAsync(PlayniteApi.Database.Games.ToList()); }
+            Action = args => { _ = SyncLibraryAsync(PlayniteApi.Database.Games.ToList()); }
         };
     }
 
