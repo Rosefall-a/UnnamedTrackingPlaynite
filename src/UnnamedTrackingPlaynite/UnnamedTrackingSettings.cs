@@ -76,6 +76,8 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
 
     public void EndEdit()
     {
+        ApiUrl = ApiUrl.Trim().TrimEnd('/');
+        AuthValue = AuthValue.Trim();
         plugin?.SavePluginSettings(this);
     }
 
@@ -111,6 +113,11 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
             {
                 errors.Add("API URL must be a valid HTTP or HTTPS URL.");
             }
+        }
+
+        if (!string.IsNullOrWhiteSpace(AuthValue) && !AuthValue.Trim().StartsWith("utk_", StringComparison.Ordinal))
+        {
+            errors.Add("The authentication value must be an Unnamed Tracking API key beginning with utk_.");
         }
 
         if ((SyncOnStartup || SyncOnGameStopped) &&
