@@ -1,5 +1,6 @@
 using System;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -47,11 +48,17 @@ public partial class UnnamedTrackingSettingsView : UserControl
 
         UploadButton.IsEnabled = false;
         UploadStatus.Text = "Syncing Playnite library...";
+        CancelButton.IsEnabled = true;
+        PreviewButton.IsEnabled = false;
 
         try
         {
             var result = await settings.UploadLibraryAsync();
             UploadStatus.Text = FormatResult(result);
+        }
+        catch (OperationCanceledException)
+        {
+            UploadStatus.Text = "Library sync cancelled."; 
         }
         catch (Exception ex)
         {
@@ -60,6 +67,53 @@ public partial class UnnamedTrackingSettingsView : UserControl
         finally
         {
             UploadButton.IsEnabled = true;
+            PreviewButton.IsEnabled = true;
+            CancelButton.IsEnabled = false;
+        }
+    }
+
+    private async void PreviewButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!(DataContext is UnnamedTrackingSettings settings))
+        {
+            UploadStatus.Text = "Unable to access plugin settings.";
+            return;
+        }
+
+        UploadButton.IsEnabled = false;
+        PreviewButton.IsEnabled = false;
+        UploadStatus.Text = "Building synchronization preview...";
+        try
+        {
+            var result = await settings.PreviewLibraryAsync();
+            var builder = new StringBuilder();
+            builder.AppendLine("Synchronization preview");
+            builder.AppendLine($"Total library entries: {result.TotalGames}");
+            builder.AppendLine($"Would create: {result.WouldCreate}");
+            builder.AppendLine($"Would update: {result.WouldUpdate}");
+            builder.AppendLine($"Ignored: {result.Ignored}");
+            if (result.Creates.Count > 0) builder.AppendLine("Creates: " + string.Join(", ", result.Creates));
+            if (result.Updates.Count > 0) builder.AppendLine("Updates: " + string.Join(", ", result.Updates));
+            if (result.IgnoredGames.Count > 0) builder.AppendLine("Ignored games: " + string.Join(", ", result.IgnoredGames));
+            UploadStatus.Text = builder.ToString();
+        }
+        catch (Exception ex)
+        {
+            UploadStatus.Text = $"Preview failed: {ex.Message}";
+        }
+        finally
+        {
+            UploadButton.IsEnabled = true;
+            PreviewButton.IsEnabled = true;
+        }
+    }
+
+    private void CancelButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is UnnamedTrackingSettings settings)
+        {
+            settings.CancelSync();
+            UploadStatus.Text = "Cancelling library sync...";
         }
     }
 
