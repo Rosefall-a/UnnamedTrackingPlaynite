@@ -73,6 +73,16 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
         plugin?.SavePluginSettings(this);
     }
 
+    public Task<bool> TestConnectionAsync()
+    {
+        if (plugin == null)
+        {
+            throw new InvalidOperationException("The plugin is not initialized.");
+        }
+
+        return plugin.TestConnectionAsync();
+    }
+
     public Task<UnnamedTrackingUploadResult> UploadLibraryAsync()
     {
         if (plugin == null)
