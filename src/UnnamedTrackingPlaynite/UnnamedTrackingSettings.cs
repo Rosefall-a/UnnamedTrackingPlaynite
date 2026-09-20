@@ -105,11 +105,18 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
 
         if (!string.IsNullOrWhiteSpace(ApiUrl))
         {
-            if (!Uri.TryCreate(ApiUrl, UriKind.Absolute, out var uri) ||
-                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            if (!Uri.TryCreate(ApiUrl.Trim(), UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+                string.IsNullOrWhiteSpace(uri.Host))
             {
                 errors.Add("API URL must be a valid HTTP or HTTPS URL.");
             }
+        }
+
+        if ((SyncOnStartup || SyncOnGameStopped) &&
+            (string.IsNullOrWhiteSpace(ApiUrl) || string.IsNullOrWhiteSpace(AuthValue)))
+        {
+            errors.Add("An API URL and API key are required when automatic synchronization is enabled.");
         }
 
         return errors.Count == 0;
