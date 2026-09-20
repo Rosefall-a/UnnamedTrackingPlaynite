@@ -118,7 +118,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
             {
                 try
                 {
-                    var result = await _syncClient.UploadLibraryAsync(Settings.ApiUrl, Settings.AuthValue, games).ConfigureAwait(false);
+                    var result = await _syncClient.UploadLibraryAsync(Settings.ApiUrl, Settings.AuthValue, games, Settings.IgnoreTag).ConfigureAwait(false);
                     _logger.Info($"Automatic Unnamed Tracking startup sync finished: {result.SucceededGames}/{result.TotalGames} succeeded, {result.FailedGames} failed, {result.WarningCount} warnings.");
                 }
                 catch (Exception ex)
