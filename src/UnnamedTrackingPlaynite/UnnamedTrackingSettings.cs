@@ -14,6 +14,8 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     private string editingAuthValue = string.Empty;
     private bool syncOnStartup;
     private bool syncOnGameStopped;
+    private bool editingSyncOnStartup;
+    private bool editingSyncOnGameStopped;
 
     public string ApiUrl
     {
@@ -60,12 +62,16 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     {
         editingApiUrl = ApiUrl;
         editingAuthValue = AuthValue;
+        editingSyncOnStartup = SyncOnStartup;
+        editingSyncOnGameStopped = SyncOnGameStopped;
     }
 
     public void CancelEdit()
     {
         ApiUrl = editingApiUrl;
         AuthValue = editingAuthValue;
+        SyncOnStartup = editingSyncOnStartup;
+        SyncOnGameStopped = editingSyncOnGameStopped;
     }
 
     public void EndEdit()
