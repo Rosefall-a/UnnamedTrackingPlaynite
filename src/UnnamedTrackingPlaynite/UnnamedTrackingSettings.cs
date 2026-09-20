@@ -48,13 +48,22 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     public UnnamedTrackingSettings(UnnamedTrackingPlugin plugin)
     {
         this.plugin = plugin;
-        var savedSettings = plugin.LoadPluginSettings<UnnamedTrackingSettings>();
-        if (savedSettings != null)
+        try
         {
-            ApiUrl = savedSettings.ApiUrl;
-            AuthValue = savedSettings.AuthValue;
-            SyncOnStartup = savedSettings.SyncOnStartup;
-            SyncOnGameStopped = savedSettings.SyncOnGameStopped;
+            var savedSettings = plugin.LoadPluginSettings<UnnamedTrackingSettings>();
+            if (savedSettings != null)
+            {
+                ApiUrl = savedSettings.ApiUrl;
+                AuthValue = savedSettings.AuthValue;
+                SyncOnStartup = savedSettings.SyncOnStartup;
+                SyncOnGameStopped = savedSettings.SyncOnGameStopped;
+            }
+        }
+        catch (Exception ex)
+        {
+            // A corrupt/stale Playnite settings record must never prevent the entire
+            // extension from loading. Start from safe defaults and let the user reconfigure.
+            LogManager.GetLogger().Error($"Could not load Unnamed Tracking plugin settings; using defaults: {ex}");
         }
     }
 
