@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Playnite.SDK;
 
@@ -120,6 +121,12 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
         }
 
         return plugin.UploadLibraryAsync();
+    }
+
+    public Task<UnnamedTrackingSyncPreviewResult> PreviewLibraryAsync()
+    {
+        if (plugin == null) throw new InvalidOperationException("The plugin is not initialized.");
+        return plugin.PreviewLibraryAsync();
     }
 
     public bool VerifySettings(out List<string> errors)
