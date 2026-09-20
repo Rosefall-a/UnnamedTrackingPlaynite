@@ -253,17 +253,17 @@ internal sealed class UnnamedTrackingSyncClient
         if (!found) remote = remoteGames.Values.FirstOrDefault(item => item.PlayniteGuid == game.Id);
         if (remote == null) return;
 
-        var update = new UnnamedTrackingGameUpdatePayload
-        {
-            PlaytimeSeconds = payload.PlaytimeSeconds,
-            Favorite = payload.Favorite,
-            Status = payload.Status
-        };
+        // The upstream GameUpdate API supports the full game metadata model.
+        // Keep Playnite edits in sync rather than only sending playtime/favorite/status.
+        // In particular, tags, features, collections, links and Playnite identity are
+        // all supported by the upstream API and should not be silently dropped.
         await SendJsonAsync(
             apiUrl.TrimEnd('/') + "/api/game/update/" + remote.Id,
             authValue,
             "PATCH",
-            Serialize(update)).ConfigureAwait(false);
+            Serialize(payload)).ConfigureAwait(false);
+
+        await ApplyAtLauncherParentAsync(apiUrl, authValue, remote.Id, game, remoteGames).ConfigureAwait(false);
     }
 
     public async Task<bool> TestConnectionAsync(string apiUrl, string authValue)
@@ -479,9 +479,13 @@ internal sealed class UnnamedTrackingSyncClient
 
     private static UnnamedTrackingSyncGamePayload ToGamePayload(Game game)
     {
+        // Preserve Playnite's user-visible library classifications in the upstream
+        // fields it supports. Native tags stay untouched; metadata fields without a
+        // one-to-one upstream field are represented as namespaced tags.
         var tags = OrEmpty(game.Tags).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
         tags.AddRange(OrEmpty(game.Genres).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => "Genre: " + x));
         tags.AddRange(OrEmpty(game.Platforms).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => "Platform: " + x));
+        tags.AddRange(OrEmpty(game.Regions).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => "Region: " + x));
         return new UnnamedTrackingSyncGamePayload
         {
             Title = game.Name ?? string.Empty,
@@ -493,7 +497,7 @@ internal sealed class UnnamedTrackingSyncClient
             Series = JoinNames(game.Series),
             Tags = tags.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Features = OrEmpty(game.Features).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            Collections = OrEmpty(game.Series).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            Collections = OrEmpty(game.Categories).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Links = OrEmpty(game.Links).Where(x => x != null && !string.IsNullOrWhiteSpace(x.Url)).Select(x => new UnnamedTrackingSyncLink { Label = string.IsNullOrWhiteSpace(x.Name) ? "Playnite link" : x.Name, Url = x.Url }).ToList(),
             Source = game.Source?.Name ?? string.Empty,
             AgeRating = JoinNames(game.AgeRatings),
