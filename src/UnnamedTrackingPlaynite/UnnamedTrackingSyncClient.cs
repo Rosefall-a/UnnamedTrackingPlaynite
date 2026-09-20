@@ -7,6 +7,7 @@ using System.Net;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Playnite.SDK;
 using Playnite.SDK.Models;
@@ -105,13 +106,13 @@ internal sealed class UnnamedTrackingSyncClient
         this.playniteApi = playniteApi;
     }
 
-    public async Task<UnnamedTrackingUploadResult> UploadLibraryAsync(string apiUrl, string authValue, IEnumerable<Game> games)
+    public async Task<UnnamedTrackingUploadResult> UploadLibraryAsync(string apiUrl, string authValue, IEnumerable<Game> games, string ignoreTag = "trackingapp_ignore", CancellationToken cancellationToken = default(CancellationToken), Action<int, int, string>? progress = null)
     {
         if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
         if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
 
         var sourceGames = (games ?? Enumerable.Empty<Game>())
-            .Where(game => game != null && !HasIgnoreTag(game))
+            .Where(game => game != null && !HasIgnoreTag(game, ignoreTag))
             .ToList();
         var result = new UnnamedTrackingUploadResult { TotalGames = sourceGames.Count };
         Dictionary<string, UnnamedTrackingSyncExistingGame> existing;
@@ -125,8 +126,11 @@ internal sealed class UnnamedTrackingSyncClient
             return result;
         }
 
-        foreach (var game in sourceGames)
+        for (var index = 0; index < sourceGames.Count; index++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            var game = sourceGames[index];
+            progress?.Invoke(index, sourceGames.Count, game?.Name ?? "<null game>");
             if (game == null)
             {
                 result.Failures.Add(new UnnamedTrackingUploadFailure { GameName = "<null Playnite game>", Operation = "Prepare", ResponseBody = "Playnite returned a null game entry." });
@@ -183,6 +187,7 @@ internal sealed class UnnamedTrackingSyncClient
                 }
 
                 result.SucceededGames++;
+                progress?.Invoke(index + 1, sourceGames.Count, game.Name ?? "<unnamed game>");
             }
             catch (UnnamedTrackingSyncApiException ex)
             {
@@ -237,12 +242,13 @@ internal sealed class UnnamedTrackingSyncClient
         return true;
     }
 
-    private async Task<Dictionary<string, UnnamedTrackingSyncExistingGame>> GetExistingGamesAsync(string apiUrl, string authValue)
+    private async Task<Dictionary<string, UnnamedTrackingSyncExistingGame>> GetExistingGamesAsync(string apiUrl, string authValue, CancellationToken cancellationToken = default(CancellationToken))
     {
         var result = new Dictionary<string, UnnamedTrackingSyncExistingGame>(StringComparer.OrdinalIgnoreCase);
         var skip = 0;
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var response = await SendJsonAsync(apiUrl.TrimEnd('/') + ListPath + $"?skip={skip}&limit={PageSize}", authValue, "GET", null).ConfigureAwait(false);
             var games = Deserialize<List<UnnamedTrackingSyncExistingGame>>(response) ?? new List<UnnamedTrackingSyncExistingGame>();
             foreach (var game in games.Where(item => item != null && !string.IsNullOrWhiteSpace(item.FolderLocation))) result[game.FolderLocation] = game;
@@ -491,9 +497,10 @@ internal sealed class UnnamedTrackingSyncClient
                (game.Source?.Name?.IndexOf("ATLauncher", StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
-    private static bool HasIgnoreTag(Game game)
+    private static bool HasIgnoreTag(Game game, string ignoreTag)
     {
-        return OrEmpty(game.Tags).Any(tag => string.Equals(tag?.Name?.Trim(), "trackingapp_ignore", StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(ignoreTag)) return false;
+        return OrEmpty(game.Tags).Any(tag => string.Equals(tag?.Name?.Trim(), ignoreTag.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetFolderLocation(Game game)
