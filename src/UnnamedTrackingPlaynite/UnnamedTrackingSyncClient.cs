@@ -147,10 +147,26 @@ internal sealed class UnnamedTrackingSyncClient
                 }
 
                 operation = "Artwork (key art)";
-                await UploadCoverIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+                try
+                {
+                    await UploadCoverIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+                }
+                catch (UnnamedTrackingSyncApiException ex)
+                {
+                    result.Warnings.Add(Failure(game, operation, ex));
+                    logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} warning for '{game.Name}' ({game.Id}): HTTP {ex.StatusCode}: {ex.ResponseBody}");
+                }
 
                 operation = "Artwork (banner)";
-                await UploadBannerIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+                try
+                {
+                    await UploadBannerIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+                }
+                catch (UnnamedTrackingSyncApiException ex)
+                {
+                    result.Warnings.Add(Failure(game, operation, ex));
+                    logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} warning for '{game.Name}' ({game.Id}): HTTP {ex.StatusCode}: {ex.ResponseBody}");
+                }
 
                 result.SucceededGames++;
             }
