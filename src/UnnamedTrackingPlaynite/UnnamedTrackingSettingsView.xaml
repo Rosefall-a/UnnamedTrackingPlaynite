@@ -5,6 +5,9 @@
         <TextBlock Text="Authentication token" FontWeight="SemiBold" />
         <TextBox Margin="0,5,0,12" Text="{Binding AuthValue, UpdateSourceTrigger=PropertyChanged}" />
         <TextBlock Text="The authentication token is stored with this Playnite extension's settings." TextWrapping="Wrap" Opacity="0.7" />
+        <TextBlock Margin="0,10,0,0" Text="Ignore tag" FontWeight="SemiBold" />
+        <TextBox Margin="0,5,0,4" Text="{Binding IgnoreTag, UpdateSourceTrigger=PropertyChanged}" />
+        <TextBlock Text="Games with this tag are skipped. Leave it empty to disable the ignore filter." TextWrapping="Wrap" Opacity="0.7" />
         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
             <Button x:Name="TestButton" Content="Test connection" Width="120" Margin="0,0,8,0" Click="TestButton_Click" />
             <TextBlock x:Name="ConnectionStatus" VerticalAlignment="Center" TextWrapping="Wrap" />
@@ -19,7 +22,11 @@
 
         <TextBlock Text="Library sync" FontWeight="SemiBold" />
         <TextBlock Margin="0,5,0,10" Text="Manually upload your current Playnite game library to Unnamed Tracking." TextWrapping="Wrap" Opacity="0.7" />
-        <Button x:Name="UploadButton" Content="Upload Playnite Library" Width="180" HorizontalAlignment="Left" Click="UploadButton_Click" />
+        <StackPanel Orientation="Horizontal">
+            <Button x:Name="UploadButton" Content="Upload Playnite Library" Width="180" HorizontalAlignment="Left" Click="UploadButton_Click" />
+            <Button x:Name="PreviewButton" Content="Preview sync" Width="120" Margin="8,0,0,0" Click="PreviewButton_Click" />
+            <Button x:Name="CancelButton" Content="Cancel" Width="80" Margin="8,0,0,0" IsEnabled="False" Click="CancelButton_Click" />
+        </StackPanel>
         <TextBlock x:Name="UploadStatus" Margin="0,8,0,0" TextWrapping="Wrap" Opacity="0.8" />
     </StackPanel>
 </UserControl>
