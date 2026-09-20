@@ -64,6 +64,13 @@ internal sealed class UnnamedTrackingSyncCreatedGame
 }
 
 [DataContract]
+internal sealed class UnnamedTrackingGameRelationshipPayload
+{
+    [DataMember(Name = "parent_game_id")] public Guid ParentGameId { get; set; }
+    [DataMember(Name = "relationship_type")] public string RelationshipType { get; set; } = string.Empty;
+}
+
+[DataContract]
 internal sealed class UnnamedTrackingSyncLink
 {
     [DataMember(Name = "label")] public string Label { get; set; } = string.Empty;
