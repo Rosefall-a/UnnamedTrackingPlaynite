@@ -12,6 +12,8 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     private string authValue = string.Empty;
     private string editingApiUrl = string.Empty;
     private string editingAuthValue = string.Empty;
+    private bool syncOnStartup;
+    private bool syncOnGameStopped;
 
     public string ApiUrl
     {
@@ -23,6 +25,18 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     {
         get => authValue;
         set => SetValue(ref authValue, value);
+    }
+
+    public bool SyncOnStartup
+    {
+        get => syncOnStartup;
+        set => SetValue(ref syncOnStartup, value);
+    }
+
+    public bool SyncOnGameStopped
+    {
+        get => syncOnGameStopped;
+        set => SetValue(ref syncOnGameStopped, value);
     }
 
     public UnnamedTrackingSettings()
@@ -37,6 +51,8 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
         {
             ApiUrl = savedSettings.ApiUrl;
             AuthValue = savedSettings.AuthValue;
+            SyncOnStartup = savedSettings.SyncOnStartup;
+            SyncOnGameStopped = savedSettings.SyncOnGameStopped;
         }
     }
 
