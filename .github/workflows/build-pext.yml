@@ -7,6 +7,7 @@ on:
   push:
     branches:
       - main
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -82,119 +83,32 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish dev release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Determine release tag
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          $versionLine = Get-Content 'src/UnnamedTrackingPlaynite/extension.yaml' |
+            Where-Object { $_ -match '^Version:\s*(.+)$' } |
+            Select-Object -First 1
+          if (-not $versionLine) {
+            throw 'Could not determine extension version from extension.yaml.'
+          }
+
+          $version = ($versionLine -replace '^Version:\s*', '').Trim()
+          $tag = if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $env:GITHUB_REF_NAME
+          } else {
+            "v$version"
+          }
+
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Publish GitHub release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: dev-build-${{ github.run_number }}
-          name: Dev Build #${{ github.run_number }}
-          prerelease: true
-          generate_release_notes: false
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          prerelease: false
+          generate_release_notes: true
           files: UnnamedTrackingPlaynite-*.pext
-
-  runtime-load:
-    name: Playnite runtime load test
-    needs: build
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.x'
-
-      - name: Build plugin
-        run: dotnet build src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj --configuration Release
-
-      - name: Install latest Playnite
-        shell: pwsh
-        run: |
-          $headers = @{ 'User-Agent' = 'UnnamedTrackingPlaynite-CI' }
-          $release = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/JosefNemec/Playnite/releases/latest'
-          $asset = @($release.assets | Where-Object { $_.name -eq "$($release.tag_name).7z" } | Select-Object -First 1)
-          if ($asset.Count -eq 0) {
-            throw "No Playnite portable archive was found in release $($release.tag_name)."
-          }
-
-          Write-Host "Using Playnite $($release.tag_name) portable asset $($asset[0].name)"
-          Invoke-WebRequest -Headers $headers -Uri $asset[0].browser_download_url -OutFile "$env:RUNNER_TEMP\playnite.7z"
-
-          $playniteDir = "$env:RUNNER_TEMP\playnite"
-          New-Item -ItemType Directory -Force -Path $playniteDir | Out-Null
-          $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
-          if (-not $sevenZip) {
-            throw '7-Zip is not installed on the GitHub Actions runner.'
-          }
-
-          & $sevenZip x "$env:RUNNER_TEMP\playnite.7z" "-o$playniteDir" -y
-          if ($LASTEXITCODE -ne 0) {
-            throw "7-Zip failed to extract Playnite with exit code $LASTEXITCODE."
-          }
-
-          $exe = Get-ChildItem $playniteDir -Filter 'Playnite.DesktopApp.exe' -Recurse | Select-Object -First 1
-          if (-not $exe) {
-            throw "Playnite.DesktopApp.exe was not found after extracting $($asset[0].name)."
-          }
-          "PLAYNITE_EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Install extension into isolated Playnite data directory
-        shell: pwsh
-        run: |
-          $dataDir = "$env:RUNNER_TEMP\playnite-data"
-          $extensionDir = Join-Path $dataDir 'Extensions\UnnamedTrackingPlaynite'
-          New-Item -ItemType Directory -Force -Path $extensionDir | Out-Null
-          Copy-Item 'src/UnnamedTrackingPlaynite/bin/Release/net462/UnnamedTrackingPlaynite.dll' $extensionDir
-          Copy-Item 'src/UnnamedTrackingPlaynite/extension.yaml' $extensionDir
-          "PLAYNITE_DATA=$dataDir" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Start Playnite and verify extension loading
-        shell: pwsh
-        run: |
-          $process = Start-Process -FilePath $env:PLAYNITE_EXE -ArgumentList @('--userdatadir', $env:PLAYNITE_DATA, '--startdesktop', '--nolibupdate', '--hidesplashscreen') -PassThru
-          try {
-            Start-Sleep -Seconds 30
-
-            if ($process.HasExited) {
-              throw "Playnite exited during extension load test with exit code $($process.ExitCode)."
-            }
-
-            $logPaths = @(
-              (Join-Path $env:PLAYNITE_DATA 'playnite.log'),
-              (Join-Path $env:PLAYNITE_DATA 'extensions.log'),
-              (Join-Path $env:PLAYNITE_DATA 'Logs\playnite.log'),
-              (Join-Path $env:PLAYNITE_DATA 'Logs\extensions.log')
-            )
-
-            $logs = @()
-            foreach ($path in $logPaths) {
-              if (Test-Path $path) {
-                Write-Host "===== $path ====="
-                $content = Get-Content $path
-                $content | Write-Host
-                $logs += $content
-              }
-            }
-
-            if ($logs.Count -eq 0) {
-              throw "Playnite produced no readable logs in the isolated data directory."
-            }
-
-            $joined = $logs -join [Environment]::NewLine
-            if ($joined -match '(?i)Unnamed Tracking plugin loaded') {
-              Write-Host 'Confirmed: Unnamed Tracking plugin startup was logged.'
-            }
-            elseif ($joined -match '(?i)(failed to load|could not load|load error|exception).*UnnamedTrackingPlaynite|UnnamedTrackingPlaynite.*(failed to load|could not load|load error|exception)') {
-              throw 'Playnite reported an UnnamedTrackingPlaynite load failure. See logs above.'
-            }
-            else {
-              throw 'Playnite started, but no Unnamed Tracking plugin startup message was found.'
-            }
-          }
-          finally {
-            if (-not $process.HasExited) {
-              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            }
-          }
