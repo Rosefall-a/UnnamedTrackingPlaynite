@@ -25,13 +25,9 @@ jobs:
       - name: Build
         run: dotnet build UnnamedTrackingPlaynite.sln --configuration Release --no-restore
 
-      - name: Verify extension manifest
+      - name: Validate extension output
         shell: pwsh
-        run: |
-          $manifest = "src/UnnamedTrackingPlaynite/bin/Release/net462/extension.yaml"
-          if (-not (Test-Path $manifest)) {
-            throw "Build did not produce extension.yaml"
-          }
+        run: ./tests/validate-extension.ps1 -ExtensionDirectory "src/UnnamedTrackingPlaynite/bin/Release/net462"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
