@@ -1,6 +1,9 @@
 name: Playnite runtime smoke test
 
 on:
+  push:
+    branches:
+      - fix/full-unnamed-tracking-integration
   pull_request:
     branches:
       - main
