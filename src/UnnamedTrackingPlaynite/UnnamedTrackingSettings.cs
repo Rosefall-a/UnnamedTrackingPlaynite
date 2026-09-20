@@ -113,14 +113,14 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
         return plugin.TestConnectionAsync();
     }
 
-    public Task<UnnamedTrackingUploadResult> UploadLibraryAsync()
+    public Task<UnnamedTrackingUploadResult> UploadLibraryAsync(Action<int, int, string>? progress = null)
     {
         if (plugin == null)
         {
             throw new InvalidOperationException("The plugin is not initialized.");
         }
 
-        return plugin.UploadLibraryAsync();
+        return plugin.UploadLibraryAsync(progress);
     }
 
     public Task<UnnamedTrackingSyncPreviewResult> PreviewLibraryAsync()
