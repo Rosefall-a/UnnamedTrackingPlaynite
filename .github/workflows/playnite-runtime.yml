@@ -1,0 +1,94 @@
+name: Playnite runtime smoke test
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  playnite-load:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Build plugin
+        run: dotnet build src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj --configuration Release
+
+      - name: Download latest Playnite portable build
+        shell: pwsh
+        run: |
+          $headers = @{ 'User-Agent' = 'UnnamedTrackingPlaynite-CI' }
+          $release = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/JosefNemec/Playnite/releases/latest'
+          $zipAssets = @($release.assets | Where-Object { $_.name -like '*.zip' })
+          if ($zipAssets.Count -eq 0) {
+            throw "No portable Playnite ZIP was found in release $($release.tag_name)."
+          }
+
+          $asset = $zipAssets | Sort-Object -Property size -Descending | Select-Object -First 1
+          Write-Host "Using Playnite $($release.tag_name) asset $($asset.name)"
+          Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile "$env:RUNNER_TEMP\playnite.zip"
+
+          $playniteDir = "$env:RUNNER_TEMP\playnite"
+          Expand-Archive "$env:RUNNER_TEMP\playnite.zip" -DestinationPath $playniteDir -Force
+          $exe = Get-ChildItem $playniteDir -Filter 'Playnite.DesktopApp.exe' -Recurse | Select-Object -First 1
+          if (-not $exe) {
+            throw "Playnite.DesktopApp.exe was not found after extracting $($asset.name)."
+          }
+          "PLAYNITE_EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install extension into isolated Playnite data directory
+        shell: pwsh
+        run: |
+          $dataDir = "$env:RUNNER_TEMP\playnite-data"
+          $extensionDir = Join-Path $dataDir 'Extensions\UnnamedTrackingPlaynite'
+          New-Item -ItemType Directory -Force -Path $extensionDir | Out-Null
+          Copy-Item 'src/UnnamedTrackingPlaynite/bin/Release/net462/UnnamedTrackingPlaynite.dll' $extensionDir
+          Copy-Item 'src/UnnamedTrackingPlaynite/extension.yaml' $extensionDir
+          "PLAYNITE_DATA=$dataDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Start Playnite and inspect extension loading
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath $env:PLAYNITE_EXE -ArgumentList @('--userdatadir', $env:PLAYNITE_DATA, '--startdesktop', '--nolibupdate', '--hidesplashscreen') -PassThru
+          Start-Sleep -Seconds 20
+
+          if ($process.HasExited) {
+            throw "Playnite exited during extension load smoke test with exit code $($process.ExitCode)."
+          }
+
+          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+
+          $logs = @()
+          foreach ($name in @('extensions.log', 'playnite.log')) {
+            $path = Join-Path $env:PLAYNITE_DATA $name
+            if (Test-Path $path) {
+              Write-Host "===== $name ====="
+              Get-Content $path
+              $logs += Get-Content $path
+            }
+          }
+
+          if ($logs.Count -eq 0) {
+            throw "Playnite produced no logs; the runtime smoke test could not verify extension loading."
+          }
+
+          $joined = $logs -join [Environment]::NewLine
+          if ($joined -match '(?i)UnnamedTrackingPlaynite.*(failed to load|could not load|exception|error)' -or $joined -match '(?i)(failed to load|could not load).*UnnamedTrackingPlaynite') {
+            throw "Playnite reported an UnnamedTrackingPlaynite load failure. See the logs above."
+          }
+
+          if ($joined -notmatch '(?i)Unnamed Tracking plugin loaded') {
+            throw "Playnite did not log the Unnamed Tracking plugin startup message; extension loading could not be confirmed."
+          }
