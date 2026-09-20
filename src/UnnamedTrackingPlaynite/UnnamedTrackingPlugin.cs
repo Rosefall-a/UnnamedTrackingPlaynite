@@ -62,13 +62,17 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         return new UnnamedTrackingSettingsView();
     }
 
-    public Task<UnnamedTrackingUploadResult> UploadLibraryAsync()
+    public Task<UnnamedTrackingUploadResult> UploadLibraryAsync(Action<int, int, string>? progress = null)
     {
+        syncCancellation?.Dispose();
+        syncCancellation = new CancellationTokenSource();
         return _syncClient.UploadLibraryAsync(
             Settings.ApiUrl,
             Settings.AuthValue,
             PlayniteApi.Database.Games.ToList(),
-            Settings.IgnoreTag);
+            Settings.IgnoreTag,
+            syncCancellation.Token,
+            progress);
     }
 
     public Task<UnnamedTrackingSyncPreviewResult> PreviewLibraryAsync()
