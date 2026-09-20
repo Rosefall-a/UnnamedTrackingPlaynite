@@ -52,6 +52,9 @@ internal sealed class UnnamedTrackingSyncExistingGame
     [DataMember(Name = "id")] public Guid Id { get; set; }
     [DataMember(Name = "folder_location")] public string FolderLocation { get; set; } = string.Empty;
     [DataMember(Name = "playnite_guid")] public Guid? PlayniteGuid { get; set; }
+    [DataMember(Name = "title")] public string Title { get; set; } = string.Empty;
+    [DataMember(Name = "source")] public string Source { get; set; } = string.Empty;
+    [DataMember(Name = "parent_game_id")] public Guid? ParentGameId { get; set; }
 }
 
 [DataContract]
@@ -100,7 +103,9 @@ internal sealed class UnnamedTrackingSyncClient
         if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
         if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
 
-        var sourceGames = (games ?? Enumerable.Empty<Game>()).ToList();
+        var sourceGames = (games ?? Enumerable.Empty<Game>())
+            .Where(game => game != null && !HasIgnoreTag(game))
+            .ToList();
         var result = new UnnamedTrackingUploadResult { TotalGames = sourceGames.Count };
         Dictionary<string, UnnamedTrackingSyncExistingGame> existing;
         try
@@ -139,11 +144,13 @@ internal sealed class UnnamedTrackingSyncClient
                     operation = "Update";
                     await SendJsonAsync(apiUrl.TrimEnd('/') + "/api/game/" + remote.Id, authValue, "PATCH", Serialize(payload)).ConfigureAwait(false);
                     remoteId = remote.Id;
+                    await ApplyAtLauncherParentAsync(apiUrl, authValue, remoteId, game, existing).ConfigureAwait(false);
                 }
                 else
                 {
                     operation = "Create";
                     remoteId = await CreateGameAsync(apiUrl, authValue, payload).ConfigureAwait(false);
+                    await ApplyAtLauncherParentAsync(apiUrl, authValue, remoteId, game, existing).ConfigureAwait(false);
                 }
 
                 operation = "Artwork (key art)";
@@ -448,6 +455,38 @@ internal sealed class UnnamedTrackingSyncClient
             FolderLocation = GetFolderLocation(game),
             PlayniteGuid = game.Id
         };
+    }
+
+    private async Task ApplyAtLauncherParentAsync(string apiUrl, string authValue, Guid remoteId, Game game, Dictionary<string, UnnamedTrackingSyncExistingGame> existing)
+    {
+        if (!IsAtLauncherGame(game)) return;
+
+        var minecraft = existing.Values.FirstOrDefault(item =>
+            string.Equals(item.Title?.Trim(), "Minecraft", StringComparison.OrdinalIgnoreCase));
+        if (minecraft == null || minecraft.Id == Guid.Empty || minecraft.Id == remoteId)
+        {
+            logger.Warn($"ATLauncher game '{game.Name}' could not be linked to the Minecraft parent because no existing Minecraft game was found.");
+            return;
+        }
+
+        var relationship = new UnnamedTrackingGameRelationshipPayload
+        {
+            ParentGameId = minecraft.Id,
+            RelationshipType = "modpack"
+        };
+        await SendJsonAsync(apiUrl.TrimEnd('/') + "/api/game/update/" + remoteId, authValue, "PATCH", Serialize(relationship)).ConfigureAwait(false);
+        logger.Info($"Linked ATLauncher game '{game.Name}' ({game.Id}) as a modpack child of Minecraft ({minecraft.Id}).");
+    }
+
+    private static bool IsAtLauncherGame(Game game)
+    {
+        return string.Equals(game.Source?.Name?.Trim(), "ATLauncher", StringComparison.OrdinalIgnoreCase) ||
+               (game.Source?.Name?.IndexOf("ATLauncher", StringComparison.OrdinalIgnoreCase) >= 0);
+    }
+
+    private static bool HasIgnoreTag(Game game)
+    {
+        return OrEmpty(game.Tags).Any(tag => string.Equals(tag?.Name?.Trim(), "trackingapp_ignore", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetFolderLocation(Game game)
