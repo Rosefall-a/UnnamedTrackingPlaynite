@@ -87,11 +87,11 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
         if (Settings.SyncOnStartup && !string.IsNullOrWhiteSpace(Settings.ApiUrl) && !string.IsNullOrWhiteSpace(Settings.AuthValue))
         {
+            var games = PlayniteApi.Database.Games.ToList();
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    var games = PlayniteApi.Database.Games.ToList();
                     var result = await _syncClient.UploadLibraryAsync(Settings.ApiUrl, Settings.AuthValue, games).ConfigureAwait(false);
                     _logger.Info($"Automatic Unnamed Tracking startup sync finished: {result.SucceededGames}/{result.TotalGames} succeeded, {result.FailedGames} failed, {result.WarningCount} warnings.");
                 }
