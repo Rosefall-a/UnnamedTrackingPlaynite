@@ -39,6 +39,14 @@ internal sealed class UnnamedTrackingSyncGamePayload
 }
 
 [DataContract]
+internal sealed class UnnamedTrackingGameUpdatePayload
+{
+    [DataMember(Name = "playtime_seconds")] public long PlaytimeSeconds { get; set; }
+    [DataMember(Name = "favorite")] public bool Favorite { get; set; }
+    [DataMember(Name = "status")] public string Status { get; set; } = string.Empty;
+}
+
+[DataContract]
 internal sealed class UnnamedTrackingSyncExistingGame
 {
     [DataMember(Name = "id")] public Guid Id { get; set; }
@@ -158,6 +166,45 @@ internal sealed class UnnamedTrackingSyncClient
             }
         }
         return result;
+    }
+
+    public async Task UpdateGameAsync(string apiUrl, string authValue, Game game)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
+        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+        if (game == null) throw new ArgumentNullException(nameof(game));
+
+        var remoteGames = await GetExistingGamesAsync(apiUrl, authValue).ConfigureAwait(false);
+        var payload = ToGamePayload(game);
+        UnnamedTrackingSyncExistingGame? remote = null;
+        var found = remoteGames.TryGetValue(payload.FolderLocation, out remote);
+        if (!found) remote = remoteGames.Values.FirstOrDefault(item => item.PlayniteGuid == game.Id);
+        if (remote == null) return;
+
+        var update = new UnnamedTrackingGameUpdatePayload
+        {
+            PlaytimeSeconds = payload.PlaytimeSeconds,
+            Favorite = payload.Favorite,
+            Status = payload.Status
+        };
+        await SendJsonAsync(
+            apiUrl.TrimEnd('/') + "/api/game/update/" + remote.Id,
+            authValue,
+            "PATCH",
+            Serialize(update)).ConfigureAwait(false);
+    }
+
+    public async Task<bool> TestConnectionAsync(string apiUrl, string authValue)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
+        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+
+        await SendJsonAsync(
+            apiUrl.TrimEnd('/') + ListPath + "?skip=0&limit=1",
+            authValue,
+            "GET",
+            null).ConfigureAwait(false);
+        return true;
     }
 
     private async Task<Dictionary<string, UnnamedTrackingSyncExistingGame>> GetExistingGamesAsync(string apiUrl, string authValue)
