@@ -18,7 +18,7 @@ $manifest = Get-Content $manifestPath -Raw
 
 $requiredFields = @("Id", "Name", "Author", "Version", "Module", "Type")
 foreach ($field in $requiredFields) {
-    if ($manifest -notmatch "(?m)^$field:\s*\S.+$") {
+    if ($manifest -notmatch "(?m)^${field}:\s*\S.+$") {
         throw "extension.yaml is missing required field '$field'."
     }
 }
