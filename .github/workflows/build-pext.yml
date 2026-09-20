@@ -59,6 +59,21 @@ jobs:
           Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $packagePath -Force
           Write-Host "Created $packagePath"
 
+      - name: Validate PEXT contents
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem "UnnamedTrackingPlaynite-*.pext" | Select-Object -First 1
+          if (-not $package) {
+            throw "PEXT package was not created."
+          }
+
+          $extractDir = Join-Path $env:RUNNER_TEMP "pext-validate"
+          if (Test-Path $extractDir) {
+            Remove-Item $extractDir -Recurse -Force
+          }
+          Expand-Archive -Path $package.FullName -DestinationPath $extractDir -Force
+          ./tests/validate-extension.ps1 -ExtensionDirectory $extractDir
+
       - name: Upload PEXT artifact
         uses: actions/upload-artifact@v4
         with:
