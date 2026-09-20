@@ -203,6 +203,43 @@ internal sealed class UnnamedTrackingSyncClient
         return result;
     }
 
+    public async Task<UnnamedTrackingSyncPreviewResult> PreviewLibraryAsync(string apiUrl, string authValue, IEnumerable<Game> games, string ignoreTag = "trackingapp_ignore", CancellationToken cancellationToken = default(CancellationToken))
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
+        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+
+        var sourceGames = (games ?? Enumerable.Empty<Game>()).ToList();
+        var result = new UnnamedTrackingSyncPreviewResult { TotalGames = sourceGames.Count };
+        var existing = await GetExistingGamesAsync(apiUrl, authValue, cancellationToken).ConfigureAwait(false);
+
+        foreach (var game in sourceGames)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (game == null) continue;
+            if (HasIgnoreTag(game, ignoreTag))
+            {
+                result.Ignored++;
+                result.IgnoredGames.Add(game.Name ?? "<unnamed game>");
+                continue;
+            }
+
+            var payload = ToGamePayload(game);
+            var found = existing.TryGetValue(payload.FolderLocation, out var remote) ||
+                        existing.Values.Any(item => item.PlayniteGuid == game.Id);
+            if (found)
+            {
+                result.WouldUpdate++;
+                result.Updates.Add(game.Name ?? "<unnamed game>");
+            }
+            else
+            {
+                result.WouldCreate++;
+                result.Creates.Add(game.Name ?? "<unnamed game>");
+            }
+        }
+        return result;
+    }
+
     public async Task UpdateGameAsync(string apiUrl, string authValue, Game game)
     {
         if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
