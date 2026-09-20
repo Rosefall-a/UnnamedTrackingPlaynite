@@ -114,24 +114,29 @@ jobs:
         run: |
           $headers = @{ 'User-Agent' = 'UnnamedTrackingPlaynite-CI' }
           $release = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/JosefNemec/Playnite/releases/latest'
-          $asset = @($release.assets | Where-Object { $_.name -match '^Playnite\d+\.exe$' } | Select-Object -First 1)
+          $asset = @($release.assets | Where-Object { $_.name -eq "$($release.tag_name).7z" } | Select-Object -First 1)
           if ($asset.Count -eq 0) {
-            throw "No Playnite offline installer was found in release $($release.tag_name)."
+            throw "No Playnite portable archive was found in release $($release.tag_name)."
           }
 
-          Write-Host "Installing Playnite $($release.tag_name) from $($asset[0].name)"
-          Invoke-WebRequest -Headers $headers -Uri $asset[0].browser_download_url -OutFile "$env:RUNNER_TEMP\playnite-setup.exe"
+          Write-Host "Using Playnite $($release.tag_name) portable asset $($asset[0].name)"
+          Invoke-WebRequest -Headers $headers -Uri $asset[0].browser_download_url -OutFile "$env:RUNNER_TEMP\playnite.7z"
 
           $playniteDir = "$env:RUNNER_TEMP\playnite"
           New-Item -ItemType Directory -Force -Path $playniteDir | Out-Null
-          $installer = Start-Process -FilePath "$env:RUNNER_TEMP\playnite-setup.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$playniteDir") -Wait -PassThru -NoNewWindow
-          if ($installer.ExitCode -ne 0) {
-            throw "Playnite installer exited with code $($installer.ExitCode)."
+          $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+          if (-not $sevenZip) {
+            throw '7-Zip is not installed on the GitHub Actions runner.'
+          }
+
+          & $sevenZip x "$env:RUNNER_TEMP\playnite.7z" "-o$playniteDir" -y
+          if ($LASTEXITCODE -ne 0) {
+            throw "7-Zip failed to extract Playnite with exit code $LASTEXITCODE."
           }
 
           $exe = Get-ChildItem $playniteDir -Filter 'Playnite.DesktopApp.exe' -Recurse | Select-Object -First 1
           if (-not $exe) {
-            throw "Playnite.DesktopApp.exe was not found after installation."
+            throw "Playnite.DesktopApp.exe was not found after extracting $($asset[0].name)."
           }
           "PLAYNITE_EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
