@@ -39,17 +39,35 @@ internal sealed class UnnamedTrackingSyncGamePayload
 }
 
 [DataContract]
+internal sealed class UnnamedTrackingGameUpdatePayload
+{
+    [DataMember(Name = "playtime_seconds")] public long PlaytimeSeconds { get; set; }
+    [DataMember(Name = "favorite")] public bool Favorite { get; set; }
+    [DataMember(Name = "status")] public string Status { get; set; } = string.Empty;
+}
+
+[DataContract]
 internal sealed class UnnamedTrackingSyncExistingGame
 {
     [DataMember(Name = "id")] public Guid Id { get; set; }
     [DataMember(Name = "folder_location")] public string FolderLocation { get; set; } = string.Empty;
     [DataMember(Name = "playnite_guid")] public Guid? PlayniteGuid { get; set; }
+    [DataMember(Name = "title")] public string Title { get; set; } = string.Empty;
+    [DataMember(Name = "source")] public string Source { get; set; } = string.Empty;
+    [DataMember(Name = "parent_game_id")] public Guid? ParentGameId { get; set; }
 }
 
 [DataContract]
 internal sealed class UnnamedTrackingSyncCreatedGame
 {
     [DataMember(Name = "id")] public Guid Id { get; set; }
+}
+
+[DataContract]
+internal sealed class UnnamedTrackingGameRelationshipPayload
+{
+    [DataMember(Name = "parent_game_id")] public Guid ParentGameId { get; set; }
+    [DataMember(Name = "relationship_type")] public string RelationshipType { get; set; } = string.Empty;
 }
 
 [DataContract]
@@ -92,7 +110,9 @@ internal sealed class UnnamedTrackingSyncClient
         if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
         if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
 
-        var sourceGames = (games ?? Enumerable.Empty<Game>()).ToList();
+        var sourceGames = (games ?? Enumerable.Empty<Game>())
+            .Where(game => game != null && !HasIgnoreTag(game))
+            .ToList();
         var result = new UnnamedTrackingUploadResult { TotalGames = sourceGames.Count };
         Dictionary<string, UnnamedTrackingSyncExistingGame> existing;
         try
@@ -131,18 +151,36 @@ internal sealed class UnnamedTrackingSyncClient
                     operation = "Update";
                     await SendJsonAsync(apiUrl.TrimEnd('/') + "/api/game/" + remote.Id, authValue, "PATCH", Serialize(payload)).ConfigureAwait(false);
                     remoteId = remote.Id;
+                    await ApplyAtLauncherParentAsync(apiUrl, authValue, remoteId, game, existing).ConfigureAwait(false);
                 }
                 else
                 {
                     operation = "Create";
                     remoteId = await CreateGameAsync(apiUrl, authValue, payload).ConfigureAwait(false);
+                    await ApplyAtLauncherParentAsync(apiUrl, authValue, remoteId, game, existing).ConfigureAwait(false);
                 }
 
                 operation = "Artwork (key art)";
-                await UploadCoverIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+                try
+                {
+                    await UploadCoverIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+                }
+                catch (UnnamedTrackingSyncApiException ex)
+                {
+                    result.Warnings.Add(Failure(game, operation, ex));
+                    logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} warning for '{game.Name}' ({game.Id}): HTTP {ex.StatusCode}: {ex.ResponseBody}");
+                }
 
                 operation = "Artwork (banner)";
-                await UploadBannerIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+                try
+                {
+                    await UploadBannerIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+                }
+                catch (UnnamedTrackingSyncApiException ex)
+                {
+                    result.Warnings.Add(Failure(game, operation, ex));
+                    logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} warning for '{game.Name}' ({game.Id}): HTTP {ex.StatusCode}: {ex.ResponseBody}");
+                }
 
                 result.SucceededGames++;
             }
@@ -158,6 +196,45 @@ internal sealed class UnnamedTrackingSyncClient
             }
         }
         return result;
+    }
+
+    public async Task UpdateGameAsync(string apiUrl, string authValue, Game game)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
+        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+        if (game == null) throw new ArgumentNullException(nameof(game));
+
+        var payload = ToGamePayload(game);
+        var remoteGames = await GetExistingGamesAsync(apiUrl, authValue).ConfigureAwait(false);
+        UnnamedTrackingSyncExistingGame? remote = null;
+        var found = remoteGames.TryGetValue(payload.FolderLocation, out remote);
+        if (!found) remote = remoteGames.Values.FirstOrDefault(item => item.PlayniteGuid == game.Id);
+        if (remote == null) return;
+
+        var update = new UnnamedTrackingGameUpdatePayload
+        {
+            PlaytimeSeconds = payload.PlaytimeSeconds,
+            Favorite = payload.Favorite,
+            Status = payload.Status
+        };
+        await SendJsonAsync(
+            apiUrl.TrimEnd('/') + "/api/game/update/" + remote.Id,
+            authValue,
+            "PATCH",
+            Serialize(update)).ConfigureAwait(false);
+    }
+
+    public async Task<bool> TestConnectionAsync(string apiUrl, string authValue)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
+        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+
+        await SendJsonAsync(
+            apiUrl.TrimEnd('/') + ListPath + "?skip=0&limit=1",
+            authValue,
+            "GET",
+            null).ConfigureAwait(false);
+        return true;
     }
 
     private async Task<Dictionary<string, UnnamedTrackingSyncExistingGame>> GetExistingGamesAsync(string apiUrl, string authValue)
@@ -385,6 +462,38 @@ internal sealed class UnnamedTrackingSyncClient
             FolderLocation = GetFolderLocation(game),
             PlayniteGuid = game.Id
         };
+    }
+
+    private async Task ApplyAtLauncherParentAsync(string apiUrl, string authValue, Guid remoteId, Game game, Dictionary<string, UnnamedTrackingSyncExistingGame> existing)
+    {
+        if (!IsAtLauncherGame(game)) return;
+
+        var minecraft = existing.Values.FirstOrDefault(item =>
+            string.Equals(item.Title?.Trim(), "Minecraft", StringComparison.OrdinalIgnoreCase));
+        if (minecraft == null || minecraft.Id == Guid.Empty || minecraft.Id == remoteId)
+        {
+            logger.Warn($"ATLauncher game '{game.Name}' could not be linked to the Minecraft parent because no existing Minecraft game was found.");
+            return;
+        }
+
+        var relationship = new UnnamedTrackingGameRelationshipPayload
+        {
+            ParentGameId = minecraft.Id,
+            RelationshipType = "modpack"
+        };
+        await SendJsonAsync(apiUrl.TrimEnd('/') + "/api/game/update/" + remoteId, authValue, "PATCH", Serialize(relationship)).ConfigureAwait(false);
+        logger.Info($"Linked ATLauncher game '{game.Name}' ({game.Id}) as a modpack child of Minecraft ({minecraft.Id}).");
+    }
+
+    private static bool IsAtLauncherGame(Game game)
+    {
+        return string.Equals(game.Source?.Name?.Trim(), "ATLauncher", StringComparison.OrdinalIgnoreCase) ||
+               (game.Source?.Name?.IndexOf("ATLauncher", StringComparison.OrdinalIgnoreCase) >= 0);
+    }
+
+    private static bool HasIgnoreTag(Game game)
+    {
+        return OrEmpty(game.Tags).Any(tag => string.Equals(tag?.Name?.Trim(), "trackingapp_ignore", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetFolderLocation(Game game)

@@ -5,6 +5,15 @@
         <TextBlock Text="Authentication token" FontWeight="SemiBold" />
         <TextBox Margin="0,5,0,12" Text="{Binding AuthValue, UpdateSourceTrigger=PropertyChanged}" />
         <TextBlock Text="The authentication token is stored with this Playnite extension's settings." TextWrapping="Wrap" Opacity="0.7" />
+        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+            <Button x:Name="TestButton" Content="Test connection" Width="120" Margin="0,0,8,0" Click="TestButton_Click" />
+            <TextBlock x:Name="ConnectionStatus" VerticalAlignment="Center" TextWrapping="Wrap" />
+        </StackPanel>
+        <Separator Margin="0,15,0,15" />
+        <TextBlock Text="Automatic synchronization" FontWeight="SemiBold" />
+        <CheckBox Margin="0,8,0,4" Content="Sync the library when Playnite starts" IsChecked="{Binding SyncOnStartup}" />
+        <CheckBox Margin="0,0,0,8" Content="Sync a game after it stops" IsChecked="{Binding SyncOnGameStopped}" />
+        <TextBlock Text="Automatic sync uses the same API key and only updates games already linked to Unnamed Tracking." TextWrapping="Wrap" Opacity="0.7" />
 
         <Separator Margin="0,15,0,15" />
 

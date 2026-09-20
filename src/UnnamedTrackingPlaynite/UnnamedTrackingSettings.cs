@@ -12,6 +12,10 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     private string authValue = string.Empty;
     private string editingApiUrl = string.Empty;
     private string editingAuthValue = string.Empty;
+    private bool syncOnStartup;
+    private bool syncOnGameStopped;
+    private bool editingSyncOnStartup;
+    private bool editingSyncOnGameStopped;
 
     public string ApiUrl
     {
@@ -25,6 +29,18 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
         set => SetValue(ref authValue, value);
     }
 
+    public bool SyncOnStartup
+    {
+        get => syncOnStartup;
+        set => SetValue(ref syncOnStartup, value);
+    }
+
+    public bool SyncOnGameStopped
+    {
+        get => syncOnGameStopped;
+        set => SetValue(ref syncOnGameStopped, value);
+    }
+
     public UnnamedTrackingSettings()
     {
     }
@@ -32,11 +48,22 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     public UnnamedTrackingSettings(UnnamedTrackingPlugin plugin)
     {
         this.plugin = plugin;
-        var savedSettings = plugin.LoadPluginSettings<UnnamedTrackingSettings>();
-        if (savedSettings != null)
+        try
         {
-            ApiUrl = savedSettings.ApiUrl;
-            AuthValue = savedSettings.AuthValue;
+            var savedSettings = plugin.LoadPluginSettings<UnnamedTrackingSettings>();
+            if (savedSettings != null)
+            {
+                ApiUrl = savedSettings.ApiUrl;
+                AuthValue = savedSettings.AuthValue;
+                SyncOnStartup = savedSettings.SyncOnStartup;
+                SyncOnGameStopped = savedSettings.SyncOnGameStopped;
+            }
+        }
+        catch (Exception ex)
+        {
+            // A corrupt/stale Playnite settings record must never prevent the entire
+            // extension from loading. Start from safe defaults and let the user reconfigure.
+            LogManager.GetLogger().Error($"Could not load Unnamed Tracking plugin settings; using defaults: {ex}");
         }
     }
 
@@ -44,17 +71,33 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     {
         editingApiUrl = ApiUrl;
         editingAuthValue = AuthValue;
+        editingSyncOnStartup = SyncOnStartup;
+        editingSyncOnGameStopped = SyncOnGameStopped;
     }
 
     public void CancelEdit()
     {
         ApiUrl = editingApiUrl;
         AuthValue = editingAuthValue;
+        SyncOnStartup = editingSyncOnStartup;
+        SyncOnGameStopped = editingSyncOnGameStopped;
     }
 
     public void EndEdit()
     {
+        ApiUrl = ApiUrl.Trim().TrimEnd('/');
+        AuthValue = AuthValue.Trim();
         plugin?.SavePluginSettings(this);
+    }
+
+    public Task<bool> TestConnectionAsync()
+    {
+        if (plugin == null)
+        {
+            throw new InvalidOperationException("The plugin is not initialized.");
+        }
+
+        return plugin.TestConnectionAsync();
     }
 
     public Task<UnnamedTrackingUploadResult> UploadLibraryAsync()
@@ -73,11 +116,23 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
 
         if (!string.IsNullOrWhiteSpace(ApiUrl))
         {
-            if (!Uri.TryCreate(ApiUrl, UriKind.Absolute, out var uri) ||
-                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            if (!Uri.TryCreate(ApiUrl.Trim(), UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+                string.IsNullOrWhiteSpace(uri.Host))
             {
                 errors.Add("API URL must be a valid HTTP or HTTPS URL.");
             }
+        }
+
+        if (!string.IsNullOrWhiteSpace(AuthValue) && !AuthValue.Trim().StartsWith("utk_", StringComparison.Ordinal))
+        {
+            errors.Add("The authentication value must be an Unnamed Tracking API key beginning with utk_.");
+        }
+
+        if ((SyncOnStartup || SyncOnGameStopped) &&
+            (string.IsNullOrWhiteSpace(ApiUrl) || string.IsNullOrWhiteSpace(AuthValue)))
+        {
+            errors.Add("An API URL and API key are required when automatic synchronization is enabled.");
         }
 
         return errors.Count == 0;

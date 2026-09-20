@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Controls;
 using Playnite.SDK;
 using Playnite.SDK.Events;
+using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
 
 namespace UnnamedTrackingPlaynite;
@@ -33,8 +35,18 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
     {
         yield return new MainMenuItem
         {
-            Description = "Unnamed Tracking",
-            MenuSection = "@"
+            Description = "Sync library to Unnamed Tracking",
+            MenuSection = "@",
+            Action = args => { _ = SyncLibraryAsync(PlayniteApi.Database.Games.ToList()); }
+        };
+    }
+
+    public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
+    {
+        yield return new GameMenuItem
+        {
+            Description = "Sync selected games to Unnamed Tracking",
+            Action = menuArgs => { _ = SyncLibraryAsync(menuArgs.Games.ToList()); }
         };
     }
 
@@ -53,11 +65,77 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         return _syncClient.UploadLibraryAsync(
             Settings.ApiUrl,
             Settings.AuthValue,
-            PlayniteApi.Database.Games);
+            PlayniteApi.Database.Games.ToList());
+    }
+
+    public Task<bool> TestConnectionAsync()
+    {
+        return _syncClient.TestConnectionAsync(Settings.ApiUrl, Settings.AuthValue);
+    }
+
+    public override void OnGameStopped(OnGameStoppedEventArgs args)
+    {
+        var game = args?.Game;
+        if (!Settings.SyncOnGameStopped || game == null) return;
+
+        _ = SyncStoppedGameAsync(game);
+    }
+
+    private async Task SyncStoppedGameAsync(Game game)
+    {
+        try
+        {
+            await _syncClient.UpdateGameAsync(Settings.ApiUrl, Settings.AuthValue, game).ConfigureAwait(false);
+            _logger.Info($"Synced stopped game '{game.Name}' ({game.Id}) to Unnamed Tracking.");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Could not sync stopped game '{game.Name}' ({game.Id}): {ex}");
+        }
     }
 
     public override void OnApplicationStarted(OnApplicationStartedEventArgs args)
     {
         _logger.Info("Unnamed Tracking plugin loaded.");
+
+        if (Settings.SyncOnStartup && !string.IsNullOrWhiteSpace(Settings.ApiUrl) && !string.IsNullOrWhiteSpace(Settings.AuthValue))
+        {
+            var games = PlayniteApi.Database.Games.ToList();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var result = await _syncClient.UploadLibraryAsync(Settings.ApiUrl, Settings.AuthValue, games).ConfigureAwait(false);
+                    _logger.Info($"Automatic Unnamed Tracking startup sync finished: {result.SucceededGames}/{result.TotalGames} succeeded, {result.FailedGames} failed, {result.WarningCount} warnings.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"Automatic Unnamed Tracking startup sync failed: {ex}");
+                }
+            });
+        }
+    }
+
+    private async Task SyncLibraryAsync(System.Collections.Generic.IEnumerable<Game> games)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(Settings.ApiUrl) || string.IsNullOrWhiteSpace(Settings.AuthValue))
+            {
+                PlayniteApi.Dialogs.ShowErrorMessage("Configure the Unnamed Tracking API URL and API key in Add-ons > Extension settings first.", "Unnamed Tracking");
+                return;
+            }
+
+            var result = await _syncClient.UploadLibraryAsync(Settings.ApiUrl, Settings.AuthValue, games).ConfigureAwait(true);
+            var message = $"Library sync complete. {result.SucceededGames}/{result.TotalGames} games succeeded.";
+            if (result.FailedGames > 0) message += $" {result.FailedGames} failed.";
+            if (result.WarningCount > 0) message += $" {result.WarningCount} artwork warnings.";
+            PlayniteApi.Dialogs.ShowMessage(message, "Unnamed Tracking");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Manual Unnamed Tracking sync failed: {ex}");
+            PlayniteApi.Dialogs.ShowErrorMessage(ex.Message, "Unnamed Tracking");
+        }
     }
 }

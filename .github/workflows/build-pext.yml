@@ -7,6 +7,7 @@ on:
   push:
     branches:
       - main
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -59,6 +60,21 @@ jobs:
           Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $packagePath -Force
           Write-Host "Created $packagePath"
 
+      - name: Validate PEXT contents
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem "UnnamedTrackingPlaynite-*.pext" | Select-Object -First 1
+          if (-not $package) {
+            throw "PEXT package was not created."
+          }
+
+          $extractDir = Join-Path $env:RUNNER_TEMP "pext-validate"
+          if (Test-Path $extractDir) {
+            Remove-Item $extractDir -Recurse -Force
+          }
+          Expand-Archive -Path $package.FullName -DestinationPath $extractDir -Force
+          ./tests/validate-extension.ps1 -ExtensionDirectory $extractDir
+
       - name: Upload PEXT artifact
         uses: actions/upload-artifact@v4
         with:
@@ -67,12 +83,32 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish dev release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Determine release tag
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          $versionLine = Get-Content 'src/UnnamedTrackingPlaynite/extension.yaml' |
+            Where-Object { $_ -match '^Version:\s*(.+)$' } |
+            Select-Object -First 1
+          if (-not $versionLine) {
+            throw 'Could not determine extension version from extension.yaml.'
+          }
+
+          $version = ($versionLine -replace '^Version:\s*', '').Trim()
+          $tag = if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $env:GITHUB_REF_NAME
+          } else {
+            "v$version"
+          }
+
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Publish GitHub release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: dev-build-${{ github.run_number }}
-          name: Dev Build #${{ github.run_number }}
-          prerelease: true
-          generate_release_notes: false
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          prerelease: false
+          generate_release_notes: true
           files: UnnamedTrackingPlaynite-*.pext

@@ -12,6 +12,31 @@ public partial class UnnamedTrackingSettingsView : UserControl
         InitializeComponent();
     }
 
+    private async void TestButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!(DataContext is UnnamedTrackingSettings settings))
+        {
+            ConnectionStatus.Text = "Unable to access plugin settings.";
+            return;
+        }
+
+        TestButton.IsEnabled = false;
+        ConnectionStatus.Text = "Testing...";
+        try
+        {
+            await settings.TestConnectionAsync();
+            ConnectionStatus.Text = "Connection successful.";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus.Text = $"Connection failed: {ex.Message}";
+        }
+        finally
+        {
+            TestButton.IsEnabled = true;
+        }
+    }
+
     private async void UploadButton_Click(object sender, RoutedEventArgs e)
     {
         if (!(DataContext is UnnamedTrackingSettings settings))
