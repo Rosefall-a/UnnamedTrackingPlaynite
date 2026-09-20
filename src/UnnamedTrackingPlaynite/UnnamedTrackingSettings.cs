@@ -7,7 +7,6 @@ namespace UnnamedTrackingPlaynite;
 
 public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
 {
-    [DontSerialize]
     private readonly UnnamedTrackingPlugin? plugin;
     private string apiUrl = string.Empty;
     private string authValue = string.Empty;
