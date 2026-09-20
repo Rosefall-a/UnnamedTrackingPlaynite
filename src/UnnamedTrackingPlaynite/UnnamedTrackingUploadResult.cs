@@ -17,6 +17,8 @@ public sealed class UnnamedTrackingUploadResult
     public int TotalGames { get; set; }
     public int SucceededGames { get; set; }
     public List<UnnamedTrackingUploadFailure> Failures { get; set; } = new List<UnnamedTrackingUploadFailure>();
+    public List<UnnamedTrackingUploadFailure> Warnings { get; set; } = new List<UnnamedTrackingUploadFailure>();
 
     public int FailedGames => Failures.Count;
+    public int WarningCount => Warnings.Count;
 }
