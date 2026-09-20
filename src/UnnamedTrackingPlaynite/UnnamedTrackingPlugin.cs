@@ -73,8 +73,9 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         return _syncClient.TestConnectionAsync(Settings.ApiUrl, Settings.AuthValue);
     }
 
-    public override void OnGameStopped(Game game, long elapsedSeconds)
+    public override void OnGameStopped(OnGameStoppedEventArgs args)
     {
+        var game = args?.Game;
         if (!Settings.SyncOnGameStopped || game == null) return;
 
         _ = SyncStoppedGameAsync(game);
