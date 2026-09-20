@@ -28,81 +28,35 @@ jobs:
       - name: Build plugin
         run: dotnet build src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj --configuration Release
 
-      - name: Download and install latest Playnite
+      - name: Download latest Playnite portable archive
         shell: pwsh
         run: |
           $headers = @{ 'User-Agent' = 'UnnamedTrackingPlaynite-CI' }
           $release = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/JosefNemec/Playnite/releases/latest'
-          if (-not $release.tag_name) {
-            throw 'Could not determine the latest Playnite release.'
-          }
-
-          # Playnite 10.60 publishes the offline installer as Playnite1060.exe.
-          # The release documentation confirms the EXE is the standard installer and
-          # the ZIP is the portable package; use the installer here so the smoke test
-          # does not depend on an asset naming convention that changed between releases.
-          $asset = @($release.assets | Where-Object { $_.name -match '^Playnited+.exe
-        shell: pwsh
-        run: |
-          $dataDir = "$env:RUNNER_TEMP\playnite-data"
-          $extensionDir = Join-Path $dataDir 'Extensions\UnnamedTrackingPlaynite'
-          New-Item -ItemType Directory -Force -Path $extensionDir | Out-Null
-          Copy-Item 'src/UnnamedTrackingPlaynite/bin/Release/net462/UnnamedTrackingPlaynite.dll' $extensionDir
-          Copy-Item 'src/UnnamedTrackingPlaynite/extension.yaml' $extensionDir
-          "PLAYNITE_DATA=$dataDir" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Start Playnite and inspect extension loading
-        shell: pwsh
-        run: |
-          $process = Start-Process -FilePath $env:PLAYNITE_EXE -ArgumentList @('--userdatadir', $env:PLAYNITE_DATA, '--startdesktop', '--nolibupdate', '--hidesplashscreen') -PassThru
-          Start-Sleep -Seconds 20
-
-          if ($process.HasExited) {
-            throw "Playnite exited during extension load smoke test with exit code $($process.ExitCode)."
-          }
-
-          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
-
-          $logs = @()
-          foreach ($name in @('extensions.log', 'playnite.log')) {
-            $path = Join-Path $env:PLAYNITE_DATA $name
-            if (Test-Path $path) {
-              Write-Host "===== $name ====="
-              Get-Content $path
-              $logs += Get-Content $path
-            }
-          }
-
-          if ($logs.Count -eq 0) {
-            throw "Playnite produced no logs; the runtime smoke test could not verify extension loading."
-          }
-
-          $joined = $logs -join [Environment]::NewLine
-          if ($joined -match '(?i)UnnamedTrackingPlaynite.*(failed to load|could not load|exception|error)' -or $joined -match '(?i)(failed to load|could not load).*UnnamedTrackingPlaynite') {
-            throw "Playnite reported an UnnamedTrackingPlaynite load failure. See the logs above."
-          }
-
-          if ($joined -notmatch '(?i)Unnamed Tracking plugin loaded') {
-            throw "Playnite did not log the Unnamed Tracking plugin startup message; extension loading could not be confirmed."
-          }
- } | Select-Object -First 1)
+          $asset = @($release.assets | Where-Object { $_.name -eq "$($release.tag_name).7z" } | Select-Object -First 1)
           if ($asset.Count -eq 0) {
-            throw "No Playnite offline installer was found in release $($release.tag_name)."
+            throw "No Playnite portable archive was found in release $($release.tag_name)."
           }
 
-          Write-Host "Using Playnite $($release.tag_name) asset $($asset[0].name)"
-          Invoke-WebRequest -Headers $headers -Uri $asset[0].browser_download_url -OutFile "$env:RUNNER_TEMP\playnite-setup.exe"
+          Write-Host "Using Playnite $($release.tag_name) portable asset $($asset[0].name)"
+          Invoke-WebRequest -Headers $headers -Uri $asset[0].browser_download_url -OutFile "$env:RUNNER_TEMP\playnite.7z"
 
           $playniteDir = "$env:RUNNER_TEMP\playnite"
           New-Item -ItemType Directory -Force -Path $playniteDir | Out-Null
-          Start-Process -FilePath "$env:RUNNER_TEMP\playnite-setup.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$playniteDir") -Wait -NoNewWindow
+          $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+          if (-not $sevenZip) {
+            throw '7-Zip is not installed on the GitHub Actions runner.'
+          }
+
+          & $sevenZip x "$env:RUNNER_TEMP\playnite.7z" "-o$playniteDir" -y
+          if ($LASTEXITCODE -ne 0) {
+            throw "7-Zip failed to extract Playnite with exit code $LASTEXITCODE."
+          }
 
           $exe = Get-ChildItem $playniteDir -Filter 'Playnite.DesktopApp.exe' -Recurse | Select-Object -First 1
           if (-not $exe) {
-            throw "Playnite.DesktopApp.exe was not found after installing $($asset[0].name)."
+            throw "Playnite.DesktopApp.exe was not found after extracting $($asset[0].name)."
           }
-
           "PLAYNITE_EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Install extension into isolated Playnite data directory
