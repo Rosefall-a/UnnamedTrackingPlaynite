@@ -123,6 +123,11 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
         return plugin.UploadLibraryAsync(progress);
     }
 
+    public void CancelSync()
+    {
+        plugin?.CancelSync();
+    }
+
     public Task<UnnamedTrackingSyncPreviewResult> PreviewLibraryAsync()
     {
         if (plugin == null) throw new InvalidOperationException("The plugin is not initialized.");
