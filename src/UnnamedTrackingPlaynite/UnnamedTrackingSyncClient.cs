@@ -174,8 +174,8 @@ internal sealed class UnnamedTrackingSyncClient
         if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
         if (game == null) throw new ArgumentNullException(nameof(game));
 
-        var remoteGames = await GetExistingGamesAsync(apiUrl, authValue).ConfigureAwait(false);
         var payload = ToGamePayload(game);
+        var remoteGames = await GetExistingGamesAsync(apiUrl, authValue).ConfigureAwait(false);
         UnnamedTrackingSyncExistingGame? remote = null;
         var found = remoteGames.TryGetValue(payload.FolderLocation, out remote);
         if (!found) remote = remoteGames.Values.FirstOrDefault(item => item.PlayniteGuid == game.Id);
