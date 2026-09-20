@@ -153,7 +153,7 @@ internal sealed class UnnamedTrackingSyncClient
                 if (found && remote != null)
                 {
                     operation = "Update";
-                    await SendJsonAsync(apiUrl.TrimEnd('/') + "/api/game/" + remote.Id, authValue, "PATCH", Serialize(payload)).ConfigureAwait(false);
+                    await SendJsonAsync(apiUrl.TrimEnd('/') + "/api/game/update/" + remote.Id, authValue, "PATCH", Serialize(payload)).ConfigureAwait(false);
                     remoteId = remote.Id;
                     await ApplyAtLauncherParentAsync(apiUrl, authValue, remoteId, game, existing).ConfigureAwait(false);
                 }
