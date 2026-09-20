@@ -55,7 +55,12 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         return _syncClient.UploadLibraryAsync(
             Settings.ApiUrl,
             Settings.AuthValue,
-            PlayniteApi.Database.Games);
+            PlayniteApi.Database.Games.ToList());
+    }
+
+    public Task<bool> TestConnectionAsync()
+    {
+        return _syncClient.TestConnectionAsync(Settings.ApiUrl, Settings.AuthValue);
     }
 
     public override void OnGameStopped(Game game, long elapsedSeconds)
