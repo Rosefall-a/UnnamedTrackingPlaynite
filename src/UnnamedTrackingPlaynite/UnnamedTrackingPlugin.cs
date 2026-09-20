@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Controls;
 using Playnite.SDK;
@@ -16,6 +17,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
     private readonly ILogger _logger;
     private readonly UnnamedTrackingSyncClient _syncClient;
+    private CancellationTokenSource? syncCancellation;
 
     public UnnamedTrackingSettings Settings { get; }
 
@@ -65,7 +67,18 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         return _syncClient.UploadLibraryAsync(
             Settings.ApiUrl,
             Settings.AuthValue,
-            PlayniteApi.Database.Games.ToList());
+            PlayniteApi.Database.Games.ToList(),
+            Settings.IgnoreTag);
+    }
+
+    public Task<UnnamedTrackingSyncPreviewResult> PreviewLibraryAsync()
+    {
+        return _syncClient.PreviewLibraryAsync(Settings.ApiUrl, Settings.AuthValue, PlayniteApi.Database.Games.ToList(), Settings.IgnoreTag);
+    }
+
+    public void CancelSync()
+    {
+        syncCancellation?.Cancel();
     }
 
     public Task<bool> TestConnectionAsync()
@@ -126,10 +139,14 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
                 return;
             }
 
-            var result = await _syncClient.UploadLibraryAsync(Settings.ApiUrl, Settings.AuthValue, games).ConfigureAwait(true);
+            syncCancellation?.Dispose();
+            syncCancellation = new CancellationTokenSource();
+            var result = await _syncClient.UploadLibraryAsync(Settings.ApiUrl, Settings.AuthValue, games, Settings.IgnoreTag, syncCancellation.Token).ConfigureAwait(true);
             var message = $"Library sync complete. {result.SucceededGames}/{result.TotalGames} games succeeded.";
             if (result.FailedGames > 0) message += $" {result.FailedGames} failed.";
             if (result.WarningCount > 0) message += $" {result.WarningCount} artwork warnings.";
+            syncCancellation?.Dispose();
+            syncCancellation = null;
             PlayniteApi.Dialogs.ShowMessage(message, "Unnamed Tracking");
         }
         catch (Exception ex)
