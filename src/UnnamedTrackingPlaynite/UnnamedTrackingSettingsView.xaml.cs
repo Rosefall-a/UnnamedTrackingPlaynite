@@ -53,7 +53,7 @@ public partial class UnnamedTrackingSettingsView : UserControl
 
         try
         {
-            var result = await settings.UploadLibraryAsync();
+            var result = await settings.UploadLibraryAsync((completed, total, game) => Dispatcher.BeginInvoke(new Action(() => UploadStatus.Text = $"Syncing {completed}/{total}: {game}")));
             UploadStatus.Text = FormatResult(result);
         }
         catch (OperationCanceledException)
