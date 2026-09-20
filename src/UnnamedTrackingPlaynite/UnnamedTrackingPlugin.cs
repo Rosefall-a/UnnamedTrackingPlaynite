@@ -77,18 +77,20 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
     {
         if (!Settings.SyncOnGameStopped || game == null) return;
 
-        _ = Task.Run(async () =>
+        _ = SyncStoppedGameAsync(game);
+    }
+
+    private async Task SyncStoppedGameAsync(Game game)
+    {
+        try
         {
-            try
-            {
-                await _syncClient.UpdateGameAsync(Settings.ApiUrl, Settings.AuthValue, game).ConfigureAwait(false);
-                _logger.Info($"Synced stopped game '{game.Name}' ({game.Id}) to Unnamed Tracking.");
-            }
-            catch (Exception ex)
-            {
-                _logger.Error($"Could not sync stopped game '{game.Name}' ({game.Id}): {ex}");
-            }
-        });
+            await _syncClient.UpdateGameAsync(Settings.ApiUrl, Settings.AuthValue, game).ConfigureAwait(false);
+            _logger.Info($"Synced stopped game '{game.Name}' ({game.Id}) to Unnamed Tracking.");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Could not sync stopped game '{game.Name}' ({game.Id}): {ex}");
+        }
     }
 
     public override void OnApplicationStarted(OnApplicationStartedEventArgs args)
