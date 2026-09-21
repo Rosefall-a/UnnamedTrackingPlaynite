@@ -310,7 +310,9 @@ internal sealed class SaveSyncManager
             return new SaveSyncStatus("Not configured", 0, config.UploadOnGameStop, config.DownloadOnGameStart);
         if (files.Count == 0)
             return new SaveSyncStatus("No local save files", 0, config.UploadOnGameStop, config.DownloadOnGameStart);
-        var changed = !string.Equals(ReadFingerprint(game.Id), Fingerprint(game.Id, config.SavePaths), StringComparison.Ordinal);
+        var changed = config.SavePaths.Any(location =>
+            !config.LocationFingerprints.TryGetValue(location.Path, out var savedFingerprint) ||
+            !string.Equals(savedFingerprint, FingerprintLocation(location), StringComparison.Ordinal));
         return new SaveSyncStatus(changed ? "Local changes pending" : "Up to date", files.Count, config.UploadOnGameStop, config.DownloadOnGameStart);
     }
 
