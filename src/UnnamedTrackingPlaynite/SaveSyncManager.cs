@@ -131,8 +131,7 @@ internal sealed class SaveSyncManager
         var zip = Path.Combine(Path.GetTempPath(), "unnamed-tracking-" + Guid.NewGuid().ToString("N") + ".zip");
         try
         {
-            var bytes = await Download(apiUrl.TrimEnd('/') + version.Url, apiKey).ConfigureAwait(false);
-            File.WriteAllBytes(zip, bytes);
+            await DownloadToFile(apiUrl.TrimEnd('/') + version.Url, apiKey, zip).ConfigureAwait(false);
             BackupExisting(config.SavePaths, game.Id);
             ExtractZip(zip, config.SavePaths);
             WriteFingerprint(game.Id, Fingerprint(game.Id, config.SavePaths));
@@ -283,36 +282,54 @@ internal sealed class SaveSyncManager
     private static async Task UploadArchive(string apiUrl, string key, Guid gameId, string zip)
     {
         var boundary = "----------------" + Guid.NewGuid().ToString("N");
-        var zipBytes = File.ReadAllBytes(zip);
+        var zipInfo = new FileInfo(zip);
         var header = Encoding.UTF8.GetBytes(
-            $"--{boundary}\r\nContent-Disposition: form-data; name=name\r\n\r\nPlaynite Save\r\n" +
-            $"--{boundary}\r\nContent-Disposition: form-data; name=file; filename=playnite-save.zip\r\n" +
-            "Content-Type: application/zip\r\n\r\n");
-        var tail = Encoding.UTF8.GetBytes($"\r\n--{boundary}--\r\n");
-        var body = new byte[header.Length + zipBytes.Length + tail.Length];
-        Buffer.BlockCopy(header, 0, body, 0, header.Length);
-        Buffer.BlockCopy(zipBytes, 0, body, header.Length, zipBytes.Length);
-        Buffer.BlockCopy(tail, 0, body, header.Length + zipBytes.Length, tail.Length);
+            $"--{boundary}\\r\\nContent-Disposition: form-data; name=name\\r\\n\\r\\nPlaynite Save\\r\\n" +
+            $"--{boundary}\\r\\nContent-Disposition: form-data; name=file; filename=playnite-save.zip\\r\\n" +
+            "Content-Type: application/zip\\r\\n\\r\\n");
+        var tail = Encoding.UTF8.GetBytes($"\\r\\n--{boundary}--\\r\\n");
 
-        await SendBytes(
-            apiUrl.TrimEnd('/') + $"/api/game/{gameId}/archives/save",
-            key,
-            "POST",
-            body,
-            "multipart/form-data; boundary=" + boundary).ConfigureAwait(false);
+        var request = (HttpWebRequest)WebRequest.Create(
+            apiUrl.TrimEnd('/') + $"/api/game/{gameId}/archives/save");
+        request.Method = "POST";
+        request.Headers[HttpRequestHeader.Authorization] = "Bearer " + key;
+        request.ContentType = "multipart/form-data; boundary=" + boundary;
+        request.ContentLength = header.LongLength + zipInfo.Length + tail.LongLength;
+
+        using (var requestStream = await request.GetRequestStreamAsync().ConfigureAwait(false))
+        {
+            await requestStream.WriteAsync(header, 0, header.Length).ConfigureAwait(false);
+            using (var input = File.OpenRead(zip))
+            {
+                var buffer = new byte[1024 * 1024];
+                int read;
+                while ((read = await input.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0)
+                    await requestStream.WriteAsync(buffer, 0, read).ConfigureAwait(false);
+            }
+            await requestStream.WriteAsync(tail, 0, tail.Length).ConfigureAwait(false);
+        }
+
+        using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+        {
+            // Force the response stream to be consumed/closed before returning so the
+            // underlying HTTP connection is reusable.
+            using (var stream = response.GetResponseStream() ?? Stream.Null)
+            {
+                await stream.CopyToAsync(Stream.Null).ConfigureAwait(false);
+            }
+        }
     }
 
-    private static async Task<byte[]> Download(string url, string key)
+    private static async Task DownloadToFile(string url, string key, string destination)
     {
         var request = (HttpWebRequest)WebRequest.Create(url);
         request.Method = "GET";
         request.Headers[HttpRequestHeader.Authorization] = "Bearer " + key;
         using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
         using (var stream = response.GetResponseStream() ?? Stream.Null)
-        using (var memory = new MemoryStream())
+        using (var output = File.Create(destination))
         {
-            await stream.CopyToAsync(memory).ConfigureAwait(false);
-            return memory.ToArray();
+            await stream.CopyToAsync(output).ConfigureAwait(false);
         }
     }
 
