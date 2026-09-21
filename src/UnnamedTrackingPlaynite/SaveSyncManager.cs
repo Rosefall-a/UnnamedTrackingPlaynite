@@ -135,7 +135,7 @@ internal sealed class SaveSyncManager
             File.WriteAllBytes(zip, bytes);
             BackupExisting(config.SavePaths, game.Id);
             ExtractZip(zip, config.SavePaths);
-            WriteFingerprint(game.Id, Fingerprint(config.SavePaths));
+            WriteFingerprint(game.Id, Fingerprint(game.Id, config.SavePaths));
             logger.Info($"Downloaded latest cloud save for '{game.Name}'.");
         }
         finally
@@ -166,7 +166,7 @@ internal sealed class SaveSyncManager
                 var root = Environment.ExpandEnvironmentVariables(item.Path);
                 foreach (var file in CollectFiles(new[] { root }))
                 {
-                    var relative = Directory.Exists(root) ? Path.GetRelativePath(root, file) : Path.GetFileName(file);
+                    var relative = Directory.Exists(root) ? file.Substring(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) : Path.GetFileName(file);
                     var safeName = string.IsNullOrWhiteSpace(item.Name) ? "Save location" : item.Name;
                     foreach (var invalid in Path.GetInvalidFileNameChars())
                         safeName = safeName.Replace(invalid, '_');
