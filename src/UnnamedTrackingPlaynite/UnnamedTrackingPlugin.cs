@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Controls;
 using Playnite.SDK;
 using Playnite.SDK.Events;
@@ -56,10 +57,12 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
     private Control CreateApplicationView()
     {
+        var host = new UserControl();
         var browser = new WebBrowser();
+        host.Content = browser;
         if (Uri.TryCreate(Settings.ApiUrl.TrimEnd('/') + "/", UriKind.Absolute, out var uri))
             browser.Navigate(uri);
-        return browser;
+        return host;
     }
 
     public override ISettings GetSettings(bool firstRunSettings)
@@ -210,8 +213,8 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         foreach (var game in args.Games)
         {
             yield return new GameMenuItem { Description = "Unnamed Tracking — Configure save locations", Action = _ => ConfigureSaveGame(game) };
-            yield return new GameMenuItem { Description = "Unnamed Tracking — Upload save now", Action = _ => _ = SyncSaveNow(game, true) };
-            yield return new GameMenuItem { Description = "Unnamed Tracking — Download latest save", Action = _ => _ = SyncSaveNow(game, false) };
+            yield return new GameMenuItem { Description = "Unnamed Tracking — Upload save now", Action = _ => { _ = SyncSaveNow(game, true); } };
+            yield return new GameMenuItem { Description = "Unnamed Tracking — Download latest save", Action = _ => { _ = SyncSaveNow(game, false); } };
             yield return new GameMenuItem { Description = "Unnamed Tracking — Enable save sync on start/stop", Action = _ => ToggleSaveSync(game, true, true) };
         }
     }
