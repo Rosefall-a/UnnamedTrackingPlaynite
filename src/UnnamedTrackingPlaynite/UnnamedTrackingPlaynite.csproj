@@ -16,6 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="System.IO.Compression.FileSystem" />
     <None Include="extension.yaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
