@@ -46,6 +46,25 @@ public partial class SavePathDialog : UserControl
         }
     }
 
+    private void AddFile_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            InitialDirectory = Directory.Exists(_initialDirectory)
+                ? _initialDirectory
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Multiselect = false,
+            CheckFileExists = true,
+            Title = "Select a save file"
+        };
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true)
+        {
+            var name = Path.GetFileName(dialog.FileName);
+            AddRow(string.IsNullOrWhiteSpace(name) ? "Save file" : name, dialog.FileName);
+        }
+    }
+
     private void AddRow(string name, string path)
     {
         var nameBox = new TextBox { Text = name ?? "Save location", Margin = new Thickness(0, 0, 8, 8) };
