@@ -25,6 +25,12 @@ internal sealed class SaveGameConfiguration
     public bool UploadOnGameStop { get; set; }
     [DataMember(Name = "download_on_game_start")]
     public bool DownloadOnGameStart { get; set; }
+    // Remote archive ids are keyed by the configured local path so each save
+    // location keeps one durable archive and future uploads become versions.
+    [DataMember(Name = "remote_archive_ids")]
+    public Dictionary<string, Guid> RemoteArchiveIds { get; set; } = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+    [DataMember(Name = "location_fingerprints")]
+    public Dictionary<string, string> LocationFingerprints { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
 [DataContract]
