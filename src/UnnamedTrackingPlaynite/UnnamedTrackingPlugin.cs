@@ -18,7 +18,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
     private readonly ILogger _logger;
     private readonly UnnamedTrackingSyncClient _syncClient;
     private readonly SaveSyncManager _saveSync;
-    private IWebView _applicationView;
+    private IWebView? _applicationView;
 
     public UnnamedTrackingSettings Settings { get; }
 
@@ -180,7 +180,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
         if (!dialog.Saved) return;
         _saveSync.SaveConfiguration(game.Id, dialog.Entries, current.UploadOnGameStop, current.DownloadOnGameStart);
-        PlayniteApi.Dialogs.ShowMessage("Saved " + dialog.Paths.Length + " local save path(s) for " + game.Name + ".", "Unnamed Tracking");
+        PlayniteApi.Dialogs.ShowMessage("Saved " + dialog.Entries.Length + " local save path(s) for " + game.Name + ".", "Unnamed Tracking");
     }
 
     private void ToggleSaveSync(Game game, bool upload, bool download)
