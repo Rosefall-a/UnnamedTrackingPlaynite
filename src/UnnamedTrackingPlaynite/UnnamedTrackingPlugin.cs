@@ -58,7 +58,11 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         };
     }
 
-    private System.Windows.Controls.Control OpenSaveSyncDashboard() => new SaveSyncDashboard(PlayniteApi, _saveSync);
+    private System.Windows.Controls.Control OpenSaveSyncDashboard() => new SaveSyncDashboard(
+        PlayniteApi,
+        _saveSync,
+        ConfigureSaveGame,
+        async (game, upload) => await SyncSaveNow(game, upload).ConfigureAwait(true));
 
     private void OpenApplicationView()
     {
