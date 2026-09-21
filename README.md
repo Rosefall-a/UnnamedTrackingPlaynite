@@ -62,6 +62,14 @@ Cover and banner artwork are uploaded to:
 
 Playnite can store artwork as local library files or remote URLs. The plugin handles both forms where possible.
 
+### Save synchronization in Playnite
+
+Save synchronization is kept local to the Playnite extension and keyed by the Playnite game GUID. Use a game's context menu to configure one or more local save folders, upload a save immediately, download the latest cloud save, or enable automatic download-on-start and upload-on-stop.
+
+Configured paths may use Windows environment variables such as `%USERPROFILE%`. Before a cloud download replaces local files, the extension creates a timestamped backup under the temporary Playnite save-backup directory.
+
+The **Unnamed Tracking** sidebar view opens the configured server UI inside Playnite. The existing API key remains an extension credential and is not placed in the web page URL or browser storage. Because the current application authenticates its web UI with a session cookie rather than accepting an API key as a browser session, the embedded UI may require a normal web login; save synchronization itself continues to use the configured API key directly.
+
 ### Game-stopped synchronization
 
 When enabled, stopping a game updates the already-linked Unnamed Tracking game with the current Playnite playtime, favourite state and completion status. It deliberately does not create missing games; use a library synchronization first.
