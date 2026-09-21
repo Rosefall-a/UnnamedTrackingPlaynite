@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.Serialization;
-using System.Text;
+using System.Runtime.Serialization.Json;
 using Playnite.SDK;
 
 namespace UnnamedTrackingPlaynite;
@@ -53,8 +53,9 @@ internal sealed class SaveSyncStore
     {
         try
         {
-            var serializer = new System.Runtime.Serialization.Json.DataContractJsonSerializer(typeof(SaveSyncConfiguration));
-            using (var stream = File.Create(path)) serializer.WriteObject(stream, Data);
+            var serializer = new DataContractJsonSerializer(typeof(SaveSyncConfiguration));
+            using (var stream = File.Create(path))
+                serializer.WriteObject(stream, Data);
         }
         catch (Exception ex)
         {
@@ -67,8 +68,11 @@ internal sealed class SaveSyncStore
         try
         {
             if (File.Exists(path))
-                var serializer = new System.Runtime.Serialization.Json.DataContractJsonSerializer(typeof(SaveSyncConfiguration));
-                using (var stream = File.OpenRead(path)) return (SaveSyncConfiguration)serializer.ReadObject(stream);
+            {
+                var serializer = new DataContractJsonSerializer(typeof(SaveSyncConfiguration));
+                using (var stream = File.OpenRead(path))
+                    return (SaveSyncConfiguration)serializer.ReadObject(stream);
+            }
         }
         catch (Exception ex)
         {
