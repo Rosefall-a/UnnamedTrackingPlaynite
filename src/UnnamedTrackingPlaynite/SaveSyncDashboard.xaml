@@ -1,0 +1,26 @@
+<UserControl x:Class="UnnamedTrackingPlaynite.SaveSyncDashboard"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Foreground="White">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="Unnamed Tracking — Save Sync" FontSize="22" FontWeight="SemiBold" />
+        <TextBlock Grid.Row="1" Margin="0,6,0,14" Text="See which games have save syncing configured, what is being synced, and whether local changes are waiting to upload." TextWrapping="Wrap" Foreground="#D8D8D8" />
+        <ListView Grid.Row="2" x:Name="GamesList" Background="Transparent" BorderThickness="0">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="Game" DisplayMemberBinding="{Binding GameName}" Width="220" />
+                    <GridViewColumn Header="Status" DisplayMemberBinding="{Binding Status}" Width="170" />
+                    <GridViewColumn Header="Files" DisplayMemberBinding="{Binding FileCount}" Width="70" />
+                    <GridViewColumn Header="Upload on stop" DisplayMemberBinding="{Binding Upload}" Width="120" />
+                    <GridViewColumn Header="Download on start" DisplayMemberBinding="{Binding Download}" Width="140" />
+                    <GridViewColumn Header="Locations" DisplayMemberBinding="{Binding Locations}" Width="260" />
+                </GridView>
+            </ListView.View>
+        </ListView>
+    </Grid>
+</UserControl>
