@@ -11,7 +11,8 @@ public partial class SavePathDialog : UserControl
 {
     private readonly Func<string, string> _selectFolder;
     private readonly string _initialDirectory;
-    private sealed class Row { public TextBox Name; public TextBox Path; }\n    private readonly List<Row> _rows = new List<Row>();
+    private sealed class Row { public TextBox Name; public TextBox Path; }
+    private readonly List<Row> _rows = new List<Row>();
 
     public bool Saved { get; private set; }
     public SavePathEntry[] Entries => _rows
