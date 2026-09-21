@@ -56,11 +56,21 @@ internal sealed class SaveSyncStore
 
     public SaveGameConfiguration For(Guid gameId)
     {
-        if (!Data.Games.TryGetValue(gameId, out var config))
+        if (Data.Games == null)
+            Data.Games = new Dictionary<Guid, SaveGameConfiguration>();
+
+        if (!Data.Games.TryGetValue(gameId, out var config) || config == null)
         {
             config = new SaveGameConfiguration();
             Data.Games[gameId] = config;
         }
+
+        // DataContractJsonSerializer does not apply property initializers when
+        // a member is absent/null in an older save-sync.json. Normalize those
+        // collections before any dashboard or sync code touches them.
+        config.SavePaths ??= new List<SavePathEntry>();
+        config.RemoteArchiveIds ??= new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        config.LocationFingerprints ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         return config;
     }
 
