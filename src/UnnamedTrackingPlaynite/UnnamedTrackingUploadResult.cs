@@ -22,3 +22,14 @@ public sealed class UnnamedTrackingUploadResult
     public int FailedGames => Failures.Count;
     public int WarningCount => Warnings.Count;
 }
+
+public sealed class UnnamedTrackingSyncPreviewResult
+{
+    public int TotalGames { get; set; }
+    public int WouldCreate { get; set; }
+    public int WouldUpdate { get; set; }
+    public int Ignored { get; set; }
+    public List<string> Creates { get; set; } = new List<string>();
+    public List<string> Updates { get; set; } = new List<string>();
+    public List<string> IgnoredGames { get; set; } = new List<string>();
+}

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -19,6 +20,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
     private readonly UnnamedTrackingSyncClient _syncClient;
     private readonly SaveSyncManager _saveSync;
     private IWebView? _applicationView;
+    private CancellationTokenSource? syncCancellation;
 
     public UnnamedTrackingSettings Settings { get; }
 
@@ -85,12 +87,27 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         return new UnnamedTrackingSettingsView();
     }
 
-    public Task<UnnamedTrackingUploadResult> UploadLibraryAsync()
+    public Task<UnnamedTrackingUploadResult> UploadLibraryAsync(Action<int, int, string>? progress = null)
     {
+        syncCancellation?.Dispose();
+        syncCancellation = new CancellationTokenSource();
         return _syncClient.UploadLibraryAsync(
             Settings.ApiUrl,
             Settings.AuthValue,
-            PlayniteApi.Database.Games.ToList());
+            PlayniteApi.Database.Games.ToList(),
+            Settings.IgnoreTag,
+            syncCancellation.Token,
+            progress);
+    }
+
+    public Task<UnnamedTrackingSyncPreviewResult> PreviewLibraryAsync()
+    {
+        return _syncClient.PreviewLibraryAsync(Settings.ApiUrl, Settings.AuthValue, PlayniteApi.Database.Games.ToList(), Settings.IgnoreTag);
+    }
+
+    public void CancelSync()
+    {
+        syncCancellation?.Cancel();
     }
 
     public Task<bool> TestConnectionAsync()
@@ -152,7 +169,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
             {
                 try
                 {
-                    var result = await _syncClient.UploadLibraryAsync(Settings.ApiUrl, Settings.AuthValue, games).ConfigureAwait(false);
+                    var result = await _syncClient.UploadLibraryAsync(Settings.ApiUrl, Settings.AuthValue, games, Settings.IgnoreTag).ConfigureAwait(false);
                     _logger.Info($"Automatic Unnamed Tracking startup sync finished: {result.SucceededGames}/{result.TotalGames} succeeded, {result.FailedGames} failed, {result.WarningCount} warnings.");
                 }
                 catch (Exception ex)
@@ -281,10 +298,14 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
                 return;
             }
 
-            var result = await _syncClient.UploadLibraryAsync(Settings.ApiUrl, Settings.AuthValue, games).ConfigureAwait(true);
+            syncCancellation?.Dispose();
+            syncCancellation = new CancellationTokenSource();
+            var result = await _syncClient.UploadLibraryAsync(Settings.ApiUrl, Settings.AuthValue, games, Settings.IgnoreTag, syncCancellation.Token).ConfigureAwait(true);
             var message = $"Library sync complete. {result.SucceededGames}/{result.TotalGames} games succeeded.";
             if (result.FailedGames > 0) message += $" {result.FailedGames} failed.";
             if (result.WarningCount > 0) message += $" {result.WarningCount} artwork warnings.";
+            syncCancellation?.Dispose();
+            syncCancellation = null;
             PlayniteApi.Dialogs.ShowMessage(message, "Unnamed Tracking");
         }
         catch (Exception ex)
