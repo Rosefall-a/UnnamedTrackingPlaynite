@@ -307,9 +307,30 @@ internal sealed class UnnamedTrackingSyncClient
 
     private async Task<Guid> CreateGameAsync(string apiUrl, string authValue, UnnamedTrackingSyncGamePayload payload)
     {
-        var response = await SendJsonAsync(apiUrl.TrimEnd('/') + CreatePath, authValue, "POST", Serialize(payload)).ConfigureAwait(false);
+        // Create with a deliberately simple title first. The PATCH immediately
+        // afterward applies the authoritative Playnite metadata.
+        var createPayload = new UnnamedTrackingSyncGamePayload
+        {
+            Title = "Playnite Sync " + payload.PlayniteGuid.ToString("N"),
+            FolderLocation = payload.FolderLocation,
+            PlayniteGuid = payload.PlayniteGuid
+        };
+
+        var response = await SendJsonAsync(
+            apiUrl.TrimEnd('/') + CreatePath,
+            authValue,
+            "POST",
+            Serialize(createPayload)).ConfigureAwait(false);
         var created = Deserialize<UnnamedTrackingSyncCreatedGame>(response);
-        if (created == null || created.Id == Guid.Empty) throw new InvalidOperationException("Game Create succeeded but the API did not return a game ID.");
+        if (created == null || created.Id == Guid.Empty)
+            throw new InvalidOperationException("Game Create succeeded but the API did not return a game ID.");
+
+        await SendJsonAsync(
+            apiUrl.TrimEnd('/') + "/api/game/update/" + created.Id,
+            authValue,
+            "PATCH",
+            Serialize(payload)).ConfigureAwait(false);
+
         return created.Id;
     }
 
