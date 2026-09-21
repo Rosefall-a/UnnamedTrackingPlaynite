@@ -18,7 +18,7 @@ public partial class SaveSyncDashboard : UserControl
         public string Locations { get; set; } = "";
     }
 
-    public SaveSyncDashboard(IPlayniteAPI api, SaveSyncManager manager)
+    internal SaveSyncDashboard(IPlayniteAPI api, SaveSyncManager manager)
     {
         InitializeComponent();
         var rows = new List<Row>();
