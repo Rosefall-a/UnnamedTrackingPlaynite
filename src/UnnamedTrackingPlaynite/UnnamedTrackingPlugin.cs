@@ -16,6 +16,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
     private readonly ILogger _logger;
     private readonly UnnamedTrackingSyncClient _syncClient;
+    private readonly SaveSyncManager _saveSync;
 
     public UnnamedTrackingSettings Settings { get; }
 
@@ -28,6 +29,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
         _logger = LogManager.GetLogger();
         _syncClient = new UnnamedTrackingSyncClient(_logger, api);
+        _saveSync = new SaveSyncManager(GetPluginUserDataPath(), _logger);
         Settings = new UnnamedTrackingSettings(this);
     }
 
@@ -48,6 +50,25 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
             Description = "Sync selected games to Unnamed Tracking",
             Action = menuArgs => { _ = SyncLibraryAsync(menuArgs.Games.ToList()); }
         };
+    }
+
+    public override IEnumerable<SidebarItem> GetSidebarItems()
+    {
+        yield return new SidebarItem
+        {
+            Title = "Unnamed Tracking",
+            Type = SiderbarItemType.View,
+            Opened = CreateApplicationView,
+            Closed = () => { }
+        };
+    }
+
+    private Control CreateApplicationView()
+    {
+        var browser = new WebBrowser();
+        if (Uri.TryCreate(Settings.ApiUrl.TrimEnd('/') + "/", UriKind.Absolute, out var uri))
+            browser.Navigate(uri);
+        return browser;
     }
 
     public override ISettings GetSettings(bool firstRunSettings)
@@ -73,12 +94,34 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         return _syncClient.TestConnectionAsync(Settings.ApiUrl, Settings.AuthValue);
     }
 
+    public override void OnGameStarted(OnGameStartedEventArgs args)
+    {
+        var game = args?.Game;
+        if (game == null) return;
+        var config = _saveSync.Configuration(game.Id);
+        if (config.DownloadOnGameStart && HasCredentials)
+            _ = RunSaveSyncAsync(() => _saveSync.DownloadAsync(game, Settings.ApiUrl, Settings.AuthValue), $"download save for '{game.Name}'");
+    }
+
     public override void OnGameStopped(OnGameStoppedEventArgs args)
     {
         var game = args?.Game;
-        if (!Settings.SyncOnGameStopped || game == null) return;
+        if (game == null) return;
 
-        _ = SyncStoppedGameAsync(game);
+        if (Settings.SyncOnGameStopped)
+            _ = SyncStoppedGameAsync(game);
+
+        var config = _saveSync.Configuration(game.Id);
+        if (config.UploadOnGameStop && HasCredentials)
+            _ = RunSaveSyncAsync(() => _saveSync.UploadAsync(game, Settings.ApiUrl, Settings.AuthValue), $"upload save for '{game.Name}'");
+    }
+
+    private bool HasCredentials => !string.IsNullOrWhiteSpace(Settings.ApiUrl) && !string.IsNullOrWhiteSpace(Settings.AuthValue);
+
+    private async Task RunSaveSyncAsync(Func<Task> action, string operation)
+    {
+        try { await action().ConfigureAwait(false); }
+        catch (Exception ex) { _logger.Error($"Could not {operation}: {ex}"); }
     }
 
     private async Task SyncStoppedGameAsync(Game game)
@@ -113,6 +156,72 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
                     _logger.Error($"Automatic Unnamed Tracking startup sync failed: {ex}");
                 }
             });
+        }
+    }
+
+    private void ConfigureSaveGame(Game game)
+    {
+        var current = _saveSync.Configuration(game.Id);
+        var dialog = new SavePathDialog(current.SavePaths.ToArray());
+        var window = PlayniteApi.Dialogs.CreateWindow(new WindowCreationOptions
+        {
+            ShowMinimizeButton = false,
+            ShowMaximizeButton = false,
+            ShowCloseButton = true
+        });
+        window.Title = "Unnamed Tracking saves — " + game.Name;
+        window.Content = dialog;
+        window.Width = 680;
+        window.Height = 360;
+        window.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        window.Owner = PlayniteApi.Dialogs.GetCurrentAppWindow();
+        window.ShowDialog();
+
+        if (!dialog.Saved) return;
+        _saveSync.SaveConfiguration(game.Id, dialog.Paths, current.UploadOnGameStop, current.DownloadOnGameStart);
+        PlayniteApi.Dialogs.ShowMessage("Saved " + dialog.Paths.Length + " local save path(s) for " + game.Name + ".", "Unnamed Tracking");
+    }
+
+    private void ToggleSaveSync(Game game, bool upload, bool download)
+    {
+        var current = _saveSync.Configuration(game.Id);
+        if (current.SavePaths.Count == 0)
+        {
+            ConfigureSaveGame(game);
+            current = _saveSync.Configuration(game.Id);
+        }
+        _saveSync.SaveConfiguration(game.Id, current.SavePaths, upload, download);
+        PlayniteApi.Dialogs.ShowMessage("Save sync updated for " + game.Name + ". Upload on stop: " + upload + ". Download on start: " + download + ".", "Unnamed Tracking");
+    }
+
+    private async Task SyncSaveNow(Game game, bool upload)
+    {
+        if (!HasCredentials)
+        {
+            PlayniteApi.Dialogs.ShowErrorMessage("Configure the Unnamed Tracking API URL and API key first.", "Unnamed Tracking");
+            return;
+        }
+        try
+        {
+            if (upload) await _saveSync.UploadAsync(game, Settings.ApiUrl, Settings.AuthValue);
+            else await _saveSync.DownloadAsync(game, Settings.ApiUrl, Settings.AuthValue);
+            PlayniteApi.Dialogs.ShowMessage(upload ? "Save uploaded successfully." : "Latest cloud save downloaded successfully.", "Unnamed Tracking");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Manual save sync failed for '" + game.Name + "': " + ex);
+            PlayniteApi.Dialogs.ShowErrorMessage(ex.Message, "Unnamed Tracking");
+        }
+    }
+
+    public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
+    {
+        foreach (var game in args.Games)
+        {
+            yield return new GameMenuItem { Description = "Unnamed Tracking — Configure save locations", Action = _ => ConfigureSaveGame(game) };
+            yield return new GameMenuItem { Description = "Unnamed Tracking — Upload save now", Action = _ => _ = SyncSaveNow(game, true) };
+            yield return new GameMenuItem { Description = "Unnamed Tracking — Download latest save", Action = _ => _ = SyncSaveNow(game, false) };
+            yield return new GameMenuItem { Description = "Unnamed Tracking — Enable save sync on start/stop", Action = _ => ToggleSaveSync(game, true, true) };
         }
     }
 
