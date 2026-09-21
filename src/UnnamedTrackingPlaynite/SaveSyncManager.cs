@@ -26,7 +26,7 @@ internal sealed class SaveRemoteArchive
 {
     [DataMember(Name = "id")] public Guid Id { get; set; }
     [DataMember(Name = "name")] public string Name { get; set; } = "";
-    [DataMember(Name = "updated_at")] public long UpdatedAt { get; set; }
+    [DataMember(Name = "updated_at")] public double UpdatedAt { get; set; }
     [DataMember(Name = "versions")] public List<SaveRemoteVersion> Versions { get; set; } = new List<SaveRemoteVersion>();
 }
 
@@ -35,7 +35,7 @@ internal sealed class SaveRemoteVersion
 {
     [DataMember(Name = "id")] public Guid Id { get; set; }
     [DataMember(Name = "filename")] public string Filename { get; set; } = "";
-    [DataMember(Name = "uploaded_at")] public long UploadedAt { get; set; }
+    [DataMember(Name = "uploaded_at")] public double UploadedAt { get; set; }
     [DataMember(Name = "url")] public string Url { get; set; } = "";
 }
 
