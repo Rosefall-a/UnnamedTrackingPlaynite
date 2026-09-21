@@ -18,7 +18,7 @@ public partial class SavePathDialog : UserControl
     public SavePathEntry[] Entries => _rows
         .Select(x => new SavePathEntry
         {
-            Name = string.IsNullOrWhiteSpace(x.Name?.Text) ? "Save location" : x.Name.Text.Trim(),
+            Name = x.Name?.Text?.Trim() ?? "Save location",
             Path = Environment.ExpandEnvironmentVariables(x.Path?.Text?.Trim() ?? string.Empty)
         })
         .Where(x => !string.IsNullOrWhiteSpace(x.Path))
