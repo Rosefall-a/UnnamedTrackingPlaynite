@@ -8,7 +8,7 @@ using Playnite.SDK;
 namespace UnnamedTrackingPlaynite;
 
 [DataContract]
-internal sealed class SavePathEntry
+public sealed class SavePathEntry
 {
     [DataMember(Name = "name")]
     public string Name { get; set; } = "";
