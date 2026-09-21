@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -7,17 +9,66 @@ namespace UnnamedTrackingPlaynite;
 
 public partial class SavePathDialog : UserControl
 {
+    private readonly Func<string, string> _selectFolder;
+    private readonly string _initialDirectory;
+    private readonly List<(TextBox Name, TextBox Path)> _rows = new List<(TextBox, TextBox)>();
+
     public bool Saved { get; private set; }
-    public string[] Paths => PathsBox.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-        .Select(x => Environment.ExpandEnvironmentVariables(x.Trim()))
-        .Where(x => !string.IsNullOrWhiteSpace(x))
-        .Distinct(StringComparer.OrdinalIgnoreCase)
+    public SavePathEntry[] Entries => _rows
+        .Select(x => new SavePathEntry
+        {
+            Name = string.IsNullOrWhiteSpace(x.Name.Text) ? "Save location" : x.Name.Text.Trim(),
+            Path = Environment.ExpandEnvironmentVariables(x.Path.Text.Trim())
+        })
+        .Where(x => !string.IsNullOrWhiteSpace(x.Path))
+        .GroupBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+        .Select(x => x.First())
         .ToArray();
 
-    public SavePathDialog(string[] paths)
+    public SavePathDialog(IEnumerable<SavePathEntry> entries, string initialDirectory, Func<string, string> selectFolder)
     {
         InitializeComponent();
-        PathsBox.Text = string.Join(Environment.NewLine, paths ?? Array.Empty<string>());
+        _selectFolder = selectFolder;
+        _initialDirectory = initialDirectory;
+
+        foreach (var entry in entries ?? Enumerable.Empty<SavePathEntry>())
+            AddRow(entry.Name, entry.Path);
+    }
+
+    private void Add_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = _selectFolder?.Invoke(_initialDirectory);
+        if (!string.IsNullOrWhiteSpace(selected))
+        {
+            var name = new DirectoryInfo(selected).Name;
+            AddRow(string.IsNullOrWhiteSpace(name) ? "Save location" : name, selected);
+        }
+    }
+
+    private void AddRow(string name, string path)
+    {
+        var nameBox = new TextBox { Text = name ?? "Save location", Margin = new Thickness(0, 0, 8, 8) };
+        var pathBox = new TextBox { Text = path ?? "", Margin = new Thickness(0, 0, 8, 8) };
+        var remove = new Button { Content = "Remove", Margin = new Thickness(0, 0, 0, 8), Padding = new Thickness(6, 2, 6, 2) };
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        Grid.SetColumn(nameBox, 0);
+        Grid.SetColumn(pathBox, 1);
+        Grid.SetColumn(remove, 2);
+        grid.Children.Add(nameBox);
+        grid.Children.Add(pathBox);
+        grid.Children.Add(remove);
+        EntriesPanel.Children.Add(grid);
+        _rows.Add((nameBox, pathBox));
+
+        remove.Click += (sender, args) =>
+        {
+            EntriesPanel.Children.Remove(grid);
+            _rows.RemoveAll(x => ReferenceEquals(x.Name, nameBox));
+        };
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
