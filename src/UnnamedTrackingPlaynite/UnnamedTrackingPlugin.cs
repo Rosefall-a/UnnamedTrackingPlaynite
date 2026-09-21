@@ -226,17 +226,80 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
             PlayniteApi.Dialogs.ShowErrorMessage("Configure the Unnamed Tracking API URL and API key first.", "Unnamed Tracking");
             return;
         }
+
         try
         {
+            var linked = await _syncClient.IsGameLinkedAsync(Settings.ApiUrl, Settings.AuthValue, game.Id).ConfigureAwait(true);
+            if (!linked)
+            {
+                if (!ConfirmSyncGame(game)) return;
+
+                var result = await _syncClient.UploadLibraryAsync(
+                    Settings.ApiUrl,
+                    Settings.AuthValue,
+                    new[] { game },
+                    Settings.IgnoreTag).ConfigureAwait(true);
+
+                if (result.SucceededGames != 1)
+                {
+                    var failure = result.Failures.FirstOrDefault();
+                    throw new InvalidOperationException(
+                        "Could not sync the game to Unnamed Tracking." +
+                        (string.IsNullOrWhiteSpace(failure?.ResponseBody) ? string.Empty : " " + failure.ResponseBody));
+                }
+            }
+
             if (upload) await _saveSync.UploadAsync(game, Settings.ApiUrl, Settings.AuthValue);
             else await _saveSync.DownloadAsync(game, Settings.ApiUrl, Settings.AuthValue);
-            PlayniteApi.Dialogs.ShowMessage(upload ? "Save uploaded successfully." : "Latest cloud save downloaded successfully.", "Unnamed Tracking");
+            PlayniteApi.Dialogs.ShowMessage(upload ? "Game and save uploaded successfully." : "Game synced and latest cloud save downloaded successfully.", "Unnamed Tracking");
         }
         catch (Exception ex)
         {
             _logger.Error("Manual save sync failed for '" + game.Name + "': " + ex);
             PlayniteApi.Dialogs.ShowErrorMessage(ex.Message, "Unnamed Tracking");
         }
+    }
+
+    private bool ConfirmSyncGame(Game game)
+    {
+        var panel = new StackPanel { Margin = new Thickness(18) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "'" + game.Name + "' is not linked to an Unnamed Tracking game yet. Sync the game to Unnamed Tracking first, then continue with the save sync?",
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 520
+        });
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 18, 0, 0)
+        };
+        var cancel = new Button { Content = "Cancel", MinWidth = 90, Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(12, 6, 12, 6) };
+        var sync = new Button { Content = "Sync game", MinWidth = 100, Padding = new Thickness(12, 6, 12, 6) };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(sync);
+        panel.Children.Add(buttons);
+
+        var window = PlayniteApi.Dialogs.CreateWindow(new WindowCreationOptions
+        {
+            ShowMinimizeButton = false,
+            ShowMaximizeButton = false,
+            ShowCloseButton = true
+        });
+        window.Title = "Unnamed Tracking — Sync game";
+        window.Content = panel;
+        window.Width = 580;
+        window.SizeToContent = SizeToContent.Height;
+        window.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        window.Owner = PlayniteApi.Dialogs.GetCurrentAppWindow();
+
+        var shouldSync = false;
+        sync.Click += (sender, args) => { shouldSync = true; window.DialogResult = true; };
+        cancel.Click += (sender, args) => { shouldSync = false; window.DialogResult = false; };
+        window.ShowDialog();
+        return shouldSync;
     }
 
     public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
