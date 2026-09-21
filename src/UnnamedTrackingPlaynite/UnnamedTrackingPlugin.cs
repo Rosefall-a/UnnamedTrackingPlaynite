@@ -227,22 +227,22 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
             };
             yield return new GameMenuItem
             {
-                Description = "Unnamed Tracking|Save sync|Configure save locations",
+                Description = "Save sync|Configure save locations",
                 Action = _ => ConfigureSaveGame(game)
             };
             yield return new GameMenuItem
             {
-                Description = "Unnamed Tracking|Save sync|" + (config.UploadOnGameStop ? "Disable upload on game stop" : "Enable upload on game stop"),
+                Description = "Save sync|" + (config.UploadOnGameStop ? "Disable upload on game stop" : "Enable upload on game stop"),
                 Action = _ => SetSaveSyncDirection(game, true, !config.UploadOnGameStop)
             };
             yield return new GameMenuItem
             {
-                Description = "Unnamed Tracking|Save sync|" + (config.DownloadOnGameStart ? "Disable download on game start" : "Enable download on game start"),
+                Description = "Save sync|" + (config.DownloadOnGameStart ? "Disable download on game start" : "Enable download on game start"),
                 Action = _ => SetSaveSyncDirection(game, false, !config.DownloadOnGameStart)
             };
             yield return new GameMenuItem
             {
-                Description = "Unnamed Tracking|Save sync|Download latest save now",
+                Description = "Save sync|Download latest save now",
                 Action = _ => { var ignored = SyncSaveNow(game, false); }
             };
         }
