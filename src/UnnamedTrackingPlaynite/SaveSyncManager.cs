@@ -81,6 +81,13 @@ internal sealed class SaveSyncManager
             return;
         }
 
+        var fingerprint = Fingerprint(game.Id, config.SavePaths);
+        if (onlyIfChanged && string.Equals(ReadFingerprint(game.Id), fingerprint, StringComparison.Ordinal))
+        {
+            logger.Info("No save changes detected; automatic upload skipped.");
+            return;
+        }
+
         var remoteGameId = await ResolveGameId(apiUrl, apiKey, game.Id).ConfigureAwait(false);
         if (remoteGameId == Guid.Empty)
             throw new InvalidOperationException($"'{game.Name}' is not linked to an Unnamed Tracking game yet.");
@@ -90,6 +97,7 @@ internal sealed class SaveSyncManager
         {
             CreateZip(config.SavePaths, zip);
             await UploadArchive(apiUrl, apiKey, remoteGameId, zip).ConfigureAwait(false);
+            WriteFingerprint(game.Id, fingerprint);
             logger.Info($"Uploaded {files.Count} save file(s) for '{game.Name}'.");
         }
         finally
