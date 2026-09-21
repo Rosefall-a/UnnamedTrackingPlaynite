@@ -5,7 +5,7 @@ using System.Windows.Controls;
 
 namespace UnnamedTrackingPlaynite;
 
-internal partial class SavePathDialog : UserControl
+public partial class SavePathDialog : UserControl
 {
     public bool Saved { get; private set; }
     public string[] Paths => PathsBox.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
