@@ -68,7 +68,7 @@ internal sealed class SaveSyncManager
         if (c.SavePaths.Count == 0) return;
         var remoteGameId = await ResolveGameId(apiUrl, apiKey, game.Id).ConfigureAwait(false);
         if (remoteGameId == Guid.Empty) throw new InvalidOperationException($"'{game.Name}' is not linked to an Unnamed Tracking game yet.");
-        var archives = Deserialize<List<SaveRemoteArchive>>(await Send(apiUrl.TrimEnd('/') + $"/api/game/{remoteGameId}/archives/save", apiKey, "GET", null).ConfigureAwait(false)) ?? new List<SaveRemoteArchive>();
+        var archives = Deserialize<List<SaveRemoteArchive>>(await Send(apiUrl.TrimEnd('/') + $"/api/game/{remoteGameId}/archives/save", apiKey, "GET", (string)null).ConfigureAwait(false)) ?? new List<SaveRemoteArchive>();
         var archive = archives.OrderByDescending(x => x.UpdatedAt).FirstOrDefault(x => x.Versions != null && x.Versions.Count > 0);
         var version = archive?.Versions?.OrderByDescending(x => x.UploadedAt).FirstOrDefault();
         if (version == null) { logger.Info($"No cloud save exists for '{game.Name}'."); return; }
