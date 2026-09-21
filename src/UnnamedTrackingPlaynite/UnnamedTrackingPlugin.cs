@@ -243,9 +243,10 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
                 if (result.SucceededGames != 1)
                 {
                     var failure = result.Failures.FirstOrDefault();
+                    var failureBody = failure?.ResponseBody;
                     throw new InvalidOperationException(
                         "Could not sync the game to Unnamed Tracking." +
-                        (string.IsNullOrWhiteSpace(failure?.ResponseBody) ? string.Empty : " " + failure.ResponseBody));
+                        (string.IsNullOrWhiteSpace(failureBody) ? string.Empty : " " + failureBody));
                 }
             }
 
