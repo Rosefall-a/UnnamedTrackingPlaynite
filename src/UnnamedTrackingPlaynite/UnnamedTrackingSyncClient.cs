@@ -7,6 +7,7 @@ using System.Net;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Playnite.SDK;
 using Playnite.SDK.Models;
@@ -105,13 +106,13 @@ internal sealed class UnnamedTrackingSyncClient
         this.playniteApi = playniteApi;
     }
 
-    public async Task<UnnamedTrackingUploadResult> UploadLibraryAsync(string apiUrl, string authValue, IEnumerable<Game> games)
+    public async Task<UnnamedTrackingUploadResult> UploadLibraryAsync(string apiUrl, string authValue, IEnumerable<Game> games, string ignoreTag = "trackingapp_ignore", CancellationToken cancellationToken = default(CancellationToken), Action<int, int, string>? progress = null)
     {
         if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
         if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
 
         var sourceGames = (games ?? Enumerable.Empty<Game>())
-            .Where(game => game != null && !HasIgnoreTag(game))
+            .Where(game => game != null && !HasIgnoreTag(game, ignoreTag))
             .ToList();
         var result = new UnnamedTrackingUploadResult { TotalGames = sourceGames.Count };
         Dictionary<string, UnnamedTrackingSyncExistingGame> existing;
@@ -125,8 +126,11 @@ internal sealed class UnnamedTrackingSyncClient
             return result;
         }
 
-        foreach (var game in sourceGames)
+        for (var index = 0; index < sourceGames.Count; index++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            var game = sourceGames[index];
+            progress?.Invoke(index, sourceGames.Count, game?.Name ?? "<null game>");
             if (game == null)
             {
                 result.Failures.Add(new UnnamedTrackingUploadFailure { GameName = "<null Playnite game>", Operation = "Prepare", ResponseBody = "Playnite returned a null game entry." });
@@ -149,7 +153,7 @@ internal sealed class UnnamedTrackingSyncClient
                 if (found && remote != null)
                 {
                     operation = "Update";
-                    await SendJsonAsync(apiUrl.TrimEnd('/') + "/api/game/" + remote.Id, authValue, "PATCH", Serialize(payload)).ConfigureAwait(false);
+                    await SendJsonAsync(apiUrl.TrimEnd('/') + "/api/game/update/" + remote.Id, authValue, "PATCH", Serialize(payload)).ConfigureAwait(false);
                     remoteId = remote.Id;
                     await ApplyAtLauncherParentAsync(apiUrl, authValue, remoteId, game, existing).ConfigureAwait(false);
                 }
@@ -183,6 +187,7 @@ internal sealed class UnnamedTrackingSyncClient
                 }
 
                 result.SucceededGames++;
+                progress?.Invoke(index + 1, sourceGames.Count, game.Name ?? "<unnamed game>");
             }
             catch (UnnamedTrackingSyncApiException ex)
             {
@@ -193,6 +198,43 @@ internal sealed class UnnamedTrackingSyncClient
             {
                 result.Failures.Add(new UnnamedTrackingUploadFailure { GameName = game.Name ?? "<unnamed game>", GameId = game.Id, Operation = operation, ResponseBody = ex.Message });
                 logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} failed for '{game.Name}' ({game.Id}): {ex}");
+            }
+        }
+        return result;
+    }
+
+    public async Task<UnnamedTrackingSyncPreviewResult> PreviewLibraryAsync(string apiUrl, string authValue, IEnumerable<Game> games, string ignoreTag = "trackingapp_ignore", CancellationToken cancellationToken = default(CancellationToken))
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
+        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+
+        var sourceGames = (games ?? Enumerable.Empty<Game>()).ToList();
+        var result = new UnnamedTrackingSyncPreviewResult { TotalGames = sourceGames.Count };
+        var existing = await GetExistingGamesAsync(apiUrl, authValue, cancellationToken).ConfigureAwait(false);
+
+        foreach (var game in sourceGames)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (game == null) continue;
+            if (HasIgnoreTag(game, ignoreTag))
+            {
+                result.Ignored++;
+                result.IgnoredGames.Add(game.Name ?? "<unnamed game>");
+                continue;
+            }
+
+            var payload = ToGamePayload(game);
+            var found = existing.TryGetValue(payload.FolderLocation, out var remote) ||
+                        existing.Values.Any(item => item.PlayniteGuid == game.Id);
+            if (found)
+            {
+                result.WouldUpdate++;
+                result.Updates.Add(game.Name ?? "<unnamed game>");
+            }
+            else
+            {
+                result.WouldCreate++;
+                result.Creates.Add(game.Name ?? "<unnamed game>");
             }
         }
         return result;
@@ -211,17 +253,17 @@ internal sealed class UnnamedTrackingSyncClient
         if (!found) remote = remoteGames.Values.FirstOrDefault(item => item.PlayniteGuid == game.Id);
         if (remote == null) return;
 
-        var update = new UnnamedTrackingGameUpdatePayload
-        {
-            PlaytimeSeconds = payload.PlaytimeSeconds,
-            Favorite = payload.Favorite,
-            Status = payload.Status
-        };
+        // The upstream GameUpdate API supports the full game metadata model.
+        // Keep Playnite edits in sync rather than only sending playtime/favorite/status.
+        // In particular, tags, features, collections, links and Playnite identity are
+        // all supported by the upstream API and should not be silently dropped.
         await SendJsonAsync(
             apiUrl.TrimEnd('/') + "/api/game/update/" + remote.Id,
             authValue,
             "PATCH",
-            Serialize(update)).ConfigureAwait(false);
+            Serialize(payload)).ConfigureAwait(false);
+
+        await ApplyAtLauncherParentAsync(apiUrl, authValue, remote.Id, game, remoteGames).ConfigureAwait(false);
     }
 
     public async Task<bool> TestConnectionAsync(string apiUrl, string authValue)
@@ -237,12 +279,13 @@ internal sealed class UnnamedTrackingSyncClient
         return true;
     }
 
-    private async Task<Dictionary<string, UnnamedTrackingSyncExistingGame>> GetExistingGamesAsync(string apiUrl, string authValue)
+    private async Task<Dictionary<string, UnnamedTrackingSyncExistingGame>> GetExistingGamesAsync(string apiUrl, string authValue, CancellationToken cancellationToken = default(CancellationToken))
     {
         var result = new Dictionary<string, UnnamedTrackingSyncExistingGame>(StringComparer.OrdinalIgnoreCase);
         var skip = 0;
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var response = await SendJsonAsync(apiUrl.TrimEnd('/') + ListPath + $"?skip={skip}&limit={PageSize}", authValue, "GET", null).ConfigureAwait(false);
             var games = Deserialize<List<UnnamedTrackingSyncExistingGame>>(response) ?? new List<UnnamedTrackingSyncExistingGame>();
             foreach (var game in games.Where(item => item != null && !string.IsNullOrWhiteSpace(item.FolderLocation))) result[game.FolderLocation] = game;
@@ -436,9 +479,13 @@ internal sealed class UnnamedTrackingSyncClient
 
     private static UnnamedTrackingSyncGamePayload ToGamePayload(Game game)
     {
+        // Preserve Playnite's user-visible library classifications in the upstream
+        // fields it supports. Native tags stay untouched; metadata fields without a
+        // one-to-one upstream field are represented as namespaced tags.
         var tags = OrEmpty(game.Tags).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
         tags.AddRange(OrEmpty(game.Genres).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => "Genre: " + x));
         tags.AddRange(OrEmpty(game.Platforms).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => "Platform: " + x));
+        tags.AddRange(OrEmpty(game.Regions).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => "Region: " + x));
         return new UnnamedTrackingSyncGamePayload
         {
             Title = game.Name ?? string.Empty,
@@ -450,7 +497,7 @@ internal sealed class UnnamedTrackingSyncClient
             Series = JoinNames(game.Series),
             Tags = tags.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Features = OrEmpty(game.Features).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            Collections = OrEmpty(game.Series).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            Collections = OrEmpty(game.Categories).Where(x => x != null).Select(x => x.Name).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             Links = OrEmpty(game.Links).Where(x => x != null && !string.IsNullOrWhiteSpace(x.Url)).Select(x => new UnnamedTrackingSyncLink { Label = string.IsNullOrWhiteSpace(x.Name) ? "Playnite link" : x.Name, Url = x.Url }).ToList(),
             Source = game.Source?.Name ?? string.Empty,
             AgeRating = JoinNames(game.AgeRatings),
@@ -491,9 +538,10 @@ internal sealed class UnnamedTrackingSyncClient
                (game.Source?.Name?.IndexOf("ATLauncher", StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
-    private static bool HasIgnoreTag(Game game)
+    private static bool HasIgnoreTag(Game game, string ignoreTag)
     {
-        return OrEmpty(game.Tags).Any(tag => string.Equals(tag?.Name?.Trim(), "trackingapp_ignore", StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(ignoreTag)) return false;
+        return OrEmpty(game.Tags).Any(tag => string.Equals(tag?.Name?.Trim(), ignoreTag.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetFolderLocation(Game game)

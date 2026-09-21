@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Playnite.SDK;
 
@@ -12,6 +13,8 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     private string authValue = string.Empty;
     private string editingApiUrl = string.Empty;
     private string editingAuthValue = string.Empty;
+    private string ignoreTag = "trackingapp_ignore";
+    private string editingIgnoreTag = "trackingapp_ignore";
     private bool syncOnStartup;
     private bool syncOnGameStopped;
     private bool editingSyncOnStartup;
@@ -27,6 +30,12 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     {
         get => authValue;
         set => SetValue(ref authValue, value);
+    }
+
+    public string IgnoreTag
+    {
+        get => ignoreTag;
+        set => SetValue(ref ignoreTag, value);
     }
 
     public bool SyncOnStartup
@@ -55,6 +64,7 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
             {
                 ApiUrl = savedSettings.ApiUrl;
                 AuthValue = savedSettings.AuthValue;
+                IgnoreTag = string.IsNullOrWhiteSpace(savedSettings.IgnoreTag) ? "trackingapp_ignore" : savedSettings.IgnoreTag;
                 SyncOnStartup = savedSettings.SyncOnStartup;
                 SyncOnGameStopped = savedSettings.SyncOnGameStopped;
             }
@@ -71,6 +81,7 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     {
         editingApiUrl = ApiUrl;
         editingAuthValue = AuthValue;
+        editingIgnoreTag = IgnoreTag;
         editingSyncOnStartup = SyncOnStartup;
         editingSyncOnGameStopped = SyncOnGameStopped;
     }
@@ -79,6 +90,7 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     {
         ApiUrl = editingApiUrl;
         AuthValue = editingAuthValue;
+        IgnoreTag = editingIgnoreTag;
         SyncOnStartup = editingSyncOnStartup;
         SyncOnGameStopped = editingSyncOnGameStopped;
     }
@@ -87,6 +99,7 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     {
         ApiUrl = ApiUrl.Trim().TrimEnd('/');
         AuthValue = AuthValue.Trim();
+        IgnoreTag = IgnoreTag.Trim();
         plugin?.SavePluginSettings(this);
     }
 
@@ -100,14 +113,25 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
         return plugin.TestConnectionAsync();
     }
 
-    public Task<UnnamedTrackingUploadResult> UploadLibraryAsync()
+    public Task<UnnamedTrackingUploadResult> UploadLibraryAsync(Action<int, int, string>? progress = null)
     {
         if (plugin == null)
         {
             throw new InvalidOperationException("The plugin is not initialized.");
         }
 
-        return plugin.UploadLibraryAsync();
+        return plugin.UploadLibraryAsync(progress);
+    }
+
+    public void CancelSync()
+    {
+        plugin?.CancelSync();
+    }
+
+    public Task<UnnamedTrackingSyncPreviewResult> PreviewLibraryAsync()
+    {
+        if (plugin == null) throw new InvalidOperationException("The plugin is not initialized.");
+        return plugin.PreviewLibraryAsync();
     }
 
     public bool VerifySettings(out List<string> errors)
