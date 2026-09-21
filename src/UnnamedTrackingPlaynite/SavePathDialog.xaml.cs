@@ -11,7 +11,7 @@ public partial class SavePathDialog : UserControl
 {
     private readonly Func<string, string> _selectFolder;
     private readonly string _initialDirectory;
-    private readonly List<(TextBox Name, TextBox Path)> _rows = new List<(TextBox, TextBox)>();
+    private sealed class Row { public TextBox Name; public TextBox Path; }\n    private readonly List<Row> _rows = new List<Row>();
 
     public bool Saved { get; private set; }
     public SavePathEntry[] Entries => _rows
@@ -62,7 +62,7 @@ public partial class SavePathDialog : UserControl
         grid.Children.Add(pathBox);
         grid.Children.Add(remove);
         EntriesPanel.Children.Add(grid);
-        _rows.Add((nameBox, pathBox));
+        _rows.Add(new Row { Name = nameBox, Path = pathBox });
 
         remove.Click += (sender, args) =>
         {
