@@ -266,6 +266,16 @@ internal sealed class UnnamedTrackingSyncClient
         await ApplyAtLauncherParentAsync(apiUrl, authValue, remote.Id, game, remoteGames).ConfigureAwait(false);
     }
 
+    public async Task<bool> IsGameLinkedAsync(string apiUrl, string authValue, Guid playniteGuid)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
+        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+        if (playniteGuid == Guid.Empty) return false;
+
+        var existing = await GetExistingGamesAsync(apiUrl, authValue).ConfigureAwait(false);
+        return existing.Values.Any(game => game.PlayniteGuid == playniteGuid);
+    }
+
     public async Task<bool> TestConnectionAsync(string apiUrl, string authValue)
     {
         if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
