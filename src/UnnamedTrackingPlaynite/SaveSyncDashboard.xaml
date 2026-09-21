@@ -6,21 +6,32 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
+
         <TextBlock Text="Unnamed Tracking — Save Sync" FontSize="22" FontWeight="SemiBold" />
-        <TextBlock Grid.Row="1" Margin="0,6,0,14" Text="See which games have save syncing configured, what is being synced, and whether local changes are waiting to upload." TextWrapping="Wrap" Foreground="#D8D8D8" />
-        <ListView Grid.Row="2" x:Name="GamesList" Background="Transparent" BorderThickness="0">
-            <ListView.View>
-                <GridView>
-                    <GridViewColumn Header="Game" DisplayMemberBinding="{Binding GameName}" Width="220" />
-                    <GridViewColumn Header="Status" DisplayMemberBinding="{Binding Status}" Width="170" />
-                    <GridViewColumn Header="Files" DisplayMemberBinding="{Binding FileCount}" Width="70" />
-                    <GridViewColumn Header="Upload on stop" DisplayMemberBinding="{Binding Upload}" Width="120" />
-                    <GridViewColumn Header="Download on start" DisplayMemberBinding="{Binding Download}" Width="140" />
-                    <GridViewColumn Header="Locations" DisplayMemberBinding="{Binding Locations}" Width="260" />
-                </GridView>
-            </ListView.View>
-        </ListView>
+        <TextBlock Grid.Row="1" Margin="0,6,0,12"
+                   Text="Manage every configured save location, see pending changes, and sync individual games without leaving Playnite."
+                   TextWrapping="Wrap" Foreground="#D8D8D8" />
+
+        <DockPanel Grid.Row="2" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                <TextBlock Text="Sort by" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <ComboBox x:Name="SortCombo" Width="150" SelectionChanged="SortCombo_SelectionChanged">
+                    <ComboBoxItem Content="Status" IsSelected="True" />
+                    <ComboBoxItem Content="Game name" />
+                    <ComboBoxItem Content="File count" />
+                </ComboBox>
+                <Button Content="Expand all" Margin="10,0,0,0" Padding="10,4" Click="ExpandAll_Click" />
+                <Button Content="Collapse all" Margin="6,0,0,0" Padding="10,4" Click="CollapseAll_Click" />
+            </StackPanel>
+            <TextBlock x:Name="SummaryText" DockPanel.Dock="Right"
+                       VerticalAlignment="Center" Foreground="#D8D8D8" />
+        </DockPanel>
+
+        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="GroupsPanel" />
+        </ScrollViewer>
     </Grid>
 </UserControl>
