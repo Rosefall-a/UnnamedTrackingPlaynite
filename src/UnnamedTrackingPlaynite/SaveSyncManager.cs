@@ -105,6 +105,20 @@ internal sealed class SaveSyncManager
             }
 
             var archiveId = ResolveArchiveId(config, location, remoteArchives);
+            // Migrate the archive produced by the earlier implementation when
+            // there was only one configured location. This preserves its history
+            // while giving the archive its real save-location name.
+            if (archiveId == Guid.Empty &&
+                config.SavePaths.Count == 1 &&
+                remoteArchives.Count == 1 &&
+                string.Equals(remoteArchives[0].Name, "Playnite Save", StringComparison.OrdinalIgnoreCase))
+            {
+                archiveId = remoteArchives[0].Id;
+                await RenameArchive(apiUrl, apiKey, remoteGameId, archiveId, location.Name).ConfigureAwait(false);
+                remoteArchives[0].Name = location.Name;
+                config.RemoteArchiveIds[location.Path] = archiveId;
+            }
+
             var zip = Path.Combine(
                 Path.GetTempPath(),
                 "unnamed-tracking-" + Guid.NewGuid().ToString("N") + ".zip");
@@ -382,6 +396,31 @@ internal sealed class SaveSyncManager
             var created = Deserialize<SaveRemoteArchive>(Encoding.UTF8.GetString(memory.ToArray()));
             return created?.Id ?? Guid.Empty;
         }
+    }
+
+    private static async Task RenameArchive(
+        string apiUrl,
+        string key,
+        Guid gameId,
+        Guid archiveId,
+        string name)
+    {
+        var body = Encoding.UTF8.GetBytes(
+            "{"name":"" + name.Replace("\\", "\\\\").Replace(""", "\\"") + ""}");
+
+        var request = (HttpWebRequest)WebRequest.Create(
+            apiUrl.TrimEnd('/') + $"/api/game/{gameId}/archives/{archiveId}");
+        request.Method = "PATCH";
+        request.Headers[HttpRequestHeader.Authorization] = "Bearer " + key;
+        request.ContentType = "application/json";
+        request.ContentLength = body.LongLength;
+
+        using (var requestStream = await request.GetRequestStreamAsync().ConfigureAwait(false))
+            await requestStream.WriteAsync(body, 0, body.Length).ConfigureAwait(false);
+
+        using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+        using (var stream = response.GetResponseStream() ?? Stream.Null)
+            await stream.CopyToAsync(Stream.Null).ConfigureAwait(false);
     }
 
     private static async Task UploadArchiveVersion(
