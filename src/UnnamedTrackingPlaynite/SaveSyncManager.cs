@@ -52,13 +52,14 @@ internal sealed class SaveSyncManager
 
     public SaveGameConfiguration Configuration(Guid gameId) => store.For(gameId);
 
-    public void SaveConfiguration(Guid gameId, IEnumerable<string> paths, bool uploadOnStop, bool downloadOnStart)
+    public void SaveConfiguration(Guid gameId, IEnumerable<SavePathEntry> paths, bool uploadOnStop, bool downloadOnStart)
     {
         var config = store.For(gameId);
         config.SavePaths = paths
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(Environment.ExpandEnvironmentVariables)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Path))
+            .Select(x => new SavePathEntry { Name = string.IsNullOrWhiteSpace(x.Name) ? "Save location" : x.Name.Trim(), Path = Environment.ExpandEnvironmentVariables(x.Path.Trim()) })
+            .GroupBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First())
             .ToList();
         config.UploadOnGameStop = uploadOnStop;
         config.DownloadOnGameStart = downloadOnStart;
