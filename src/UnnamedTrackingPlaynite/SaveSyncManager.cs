@@ -217,7 +217,12 @@ internal sealed class SaveSyncManager
         var backupRoot = Path.Combine(Path.GetTempPath(), "UnnamedTrackingSaveBackups", gameId.ToString("N"), DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"));
         foreach (var file in files)
         {
-            var destination = Path.Combine(backupRoot, "Files", Path.GetFileName(file));
+            var sourceRoot = configured.FirstOrDefault(x => CollectFiles(new[] { x.Path }).Contains(file, StringComparer.OrdinalIgnoreCase));
+            var locationName = sourceRoot == null ? "Save location" : (string.IsNullOrWhiteSpace(sourceRoot.Name) ? "Save location" : sourceRoot.Name);
+            foreach (var invalid in Path.GetInvalidFileNameChars()) locationName = locationName.Replace(invalid, '_');
+            var root = Environment.ExpandEnvironmentVariables(sourceRoot?.Path ?? Path.GetDirectoryName(file) ?? backupRoot);
+            var relative = Directory.Exists(root) ? file.Substring(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) : Path.GetFileName(file);
+            var destination = Path.Combine(backupRoot, locationName, relative);
             var parent = Path.GetDirectoryName(destination);
             if (!string.IsNullOrWhiteSpace(parent)) Directory.CreateDirectory(parent);
             File.Copy(file, destination, true);
