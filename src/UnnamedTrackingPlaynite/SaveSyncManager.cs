@@ -148,44 +148,44 @@ internal sealed class SaveSyncManager
         return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    private static void CreateZip(List<string> files, string zip)
+    private static void CreateZip(IEnumerable<SavePathEntry> configured, string zip)
     {
         using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
         {
-            var roots = files
-                .Select(Path.GetDirectoryName)
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            foreach (var file in files)
+            foreach (var item in configured)
             {
-                var root = roots.FirstOrDefault(x => file.StartsWith(x + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                    ?? Path.GetDirectoryName(file)
-                    ?? Path.GetPathRoot(file)
-                    ?? string.Empty;
-                var entry = file.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                if (string.IsNullOrWhiteSpace(entry))
-                    entry = Path.GetFileName(file);
-                archive.CreateEntryFromFile(file, entry.Replace('\\', '/'), CompressionLevel.Optimal);
+                var root = Environment.ExpandEnvironmentVariables(item.Path);
+                foreach (var file in CollectFiles(new[] { root }))
+                {
+                    var relative = Directory.Exists(root) ? Path.GetRelativePath(root, file) : Path.GetFileName(file);
+                    var safeName = string.IsNullOrWhiteSpace(item.Name) ? "Save location" : item.Name;
+                    foreach (var invalid in Path.GetInvalidFileNameChars())
+                        safeName = safeName.Replace(invalid, '_');
+                    archive.CreateEntryFromFile(file, (safeName + "/" + relative).Replace('\\', '/'), CompressionLevel.Optimal);
+                }
             }
         }
     }
 
-    private static void ExtractZip(string zip, IEnumerable<string> roots)
+    private static void ExtractZip(string zip, IEnumerable<SavePathEntry> configured)
     {
-        var target = roots.Select(Environment.ExpandEnvironmentVariables).FirstOrDefault(Directory.Exists)
-            ?? roots.Select(Environment.ExpandEnvironmentVariables).FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(target)) return;
+        var targets = configured.ToDictionary(
+            x => string.IsNullOrWhiteSpace(x.Name) ? "Save location" : x.Name,
+            x => Environment.ExpandEnvironmentVariables(x.Path),
+            StringComparer.OrdinalIgnoreCase);
 
-        Directory.CreateDirectory(target);
-        var fullRoot = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         using (var archive = ZipFile.OpenRead(zip))
         {
             foreach (var entry in archive.Entries)
             {
-                var destination = Path.GetFullPath(Path.Combine(target, entry.FullName));
-                if (!destination.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+                var parts = entry.FullName.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 2 || !targets.TryGetValue(parts[0], out var target))
+                    throw new InvalidDataException("Save archive contains an unknown save location.");
+
+                var relative = string.Join(Path.DirectorySeparatorChar.ToString(), parts.Skip(1));
+                var destination = Path.GetFullPath(Path.Combine(target, relative));
+                var root = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                if (!destination.StartsWith(root, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("Unsafe save archive path.");
 
                 if (string.IsNullOrEmpty(entry.Name))
@@ -200,24 +200,48 @@ internal sealed class SaveSyncManager
         }
     }
 
-    private static void BackupExisting(IEnumerable<string> roots, Guid gameId)
+    private static void BackupExisting(IEnumerable<SavePathEntry> configured, Guid gameId)
     {
-        var files = CollectFiles(roots);
+        var files = CollectFiles(configured.Select(x => x.Path));
         if (files.Count == 0) return;
 
-        var backupRoot = Path.Combine(
-            Path.GetTempPath(),
-            "UnnamedTrackingSaveBackups",
-            gameId.ToString("N"),
-            DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"));
-
+        var backupRoot = Path.Combine(Path.GetTempPath(), "UnnamedTrackingSaveBackups", gameId.ToString("N"), DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"));
         foreach (var file in files)
         {
-            var destination = Path.Combine(backupRoot, Path.GetFileName(file));
+            var destination = Path.Combine(backupRoot, "Files", Path.GetFileName(file));
             var parent = Path.GetDirectoryName(destination);
             if (!string.IsNullOrWhiteSpace(parent)) Directory.CreateDirectory(parent);
             File.Copy(file, destination, true);
         }
+    }
+
+    private string Fingerprint(Guid gameId, IEnumerable<SavePathEntry> configured)
+    {
+        using (var sha = SHA256.Create())
+        {
+            var lines = new List<string>();
+            foreach (var item in configured)
+            {
+                foreach (var file in CollectFiles(new[] { item.Path }).OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                {
+                    var info = new FileInfo(file);
+                    lines.Add(item.Name + "|" + file + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks);
+                }
+            }
+            return Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(string.Join("\n", lines))));
+        }
+    }
+
+    private string ReadFingerprint(Guid gameId)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "UnnamedTrackingSaveSync", gameId.ToString("N") + ".txt");
+        try { return File.Exists(path) ? File.ReadAllText(path) : ""; } catch { return ""; }
+    }
+
+    private void WriteFingerprint(Guid gameId, string value)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "UnnamedTrackingSaveSync", gameId.ToString("N") + ".txt");
+        try { Directory.CreateDirectory(Path.GetDirectoryName(path)); File.WriteAllText(path, value); } catch { }
     }
 
     private static async Task<Guid> ResolveGameId(string apiUrl, string apiKey, Guid playniteGuid)
