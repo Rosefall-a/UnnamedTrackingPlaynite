@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using Playnite.SDK;
@@ -64,7 +65,7 @@ internal sealed class SaveSyncManager
         store.Save();
     }
 
-    public Task UploadAsync(Game game, string apiUrl, string apiKey) => Task.Run(async () =>
+    public Task UploadAsync(Game game, string apiUrl, string apiKey, bool onlyIfChanged = false) => Task.Run(async () =>
     {
         var config = store.For(game.Id);
         if (config.SavePaths.Count == 0)
@@ -73,7 +74,7 @@ internal sealed class SaveSyncManager
             return;
         }
 
-        var files = CollectFiles(config.SavePaths);
+        var files = CollectFiles(config.SavePaths.Select(x => x.Path));
         if (files.Count == 0)
         {
             logger.Info($"No save files found for '{game.Name}'.");
@@ -87,7 +88,7 @@ internal sealed class SaveSyncManager
         var zip = Path.Combine(Path.GetTempPath(), "unnamed-tracking-" + Guid.NewGuid().ToString("N") + ".zip");
         try
         {
-            CreateZip(files, zip);
+            CreateZip(config.SavePaths, zip);
             await UploadArchive(apiUrl, apiKey, remoteGameId, zip).ConfigureAwait(false);
             logger.Info($"Uploaded {files.Count} save file(s) for '{game.Name}'.");
         }
@@ -125,6 +126,7 @@ internal sealed class SaveSyncManager
             File.WriteAllBytes(zip, bytes);
             BackupExisting(config.SavePaths, game.Id);
             ExtractZip(zip, config.SavePaths);
+            WriteFingerprint(game.Id, Fingerprint(config.SavePaths));
             logger.Info($"Downloaded latest cloud save for '{game.Name}'.");
         }
         finally
