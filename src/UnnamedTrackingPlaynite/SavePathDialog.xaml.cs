@@ -50,12 +50,12 @@ public partial class SavePathDialog : UserControl
     {
         var nameBox = new TextBox { Text = name ?? "Save location", Margin = new Thickness(0, 0, 8, 8) };
         var pathBox = new TextBox { Text = path ?? "", Margin = new Thickness(0, 0, 8, 8) };
-        var remove = new Button { Content = "Remove", Margin = new Thickness(0, 0, 0, 8), Padding = new Thickness(6, 2, 6, 2) };
+        var remove = new Button { Content = "Remove", MinWidth = 60, Margin = new Thickness(0, 0, 0, 8), Padding = new Thickness(2, 2, 2, 2) };
 
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
         Grid.SetColumn(nameBox, 0);
         Grid.SetColumn(pathBox, 1);
         Grid.SetColumn(remove, 2);
