@@ -11,7 +11,7 @@ public partial class SavePathDialog : UserControl
 {
     private readonly Func<string, string> _selectFolder;
     private readonly string _initialDirectory;
-    private sealed class Row { public TextBox Name; public TextBox Path; }
+    private sealed class Row { public TextBox Name = null; public TextBox Path = null; }
     private readonly List<Row> _rows = new List<Row>();
 
     public bool Saved { get; private set; }
@@ -42,7 +42,7 @@ public partial class SavePathDialog : UserControl
         if (!string.IsNullOrWhiteSpace(selected))
         {
             var name = new DirectoryInfo(selected).Name;
-            AddRow(string.IsNullOrWhiteSpace(name) ? "Save location" : name, selected);
+            AddRow(string.IsNullOrWhiteSpace(name) ? "Save location" : name, selected ?? string.Empty);
         }
     }
 
