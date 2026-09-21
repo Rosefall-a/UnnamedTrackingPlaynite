@@ -43,15 +43,6 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         };
     }
 
-    public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
-    {
-        yield return new GameMenuItem
-        {
-            Description = "Sync selected games to Unnamed Tracking",
-            Action = menuArgs => { _ = SyncLibraryAsync(menuArgs.Games.ToList()); }
-        };
-    }
-
     public override IEnumerable<SidebarItem> GetSidebarItems()
     {
         yield return new SidebarItem
