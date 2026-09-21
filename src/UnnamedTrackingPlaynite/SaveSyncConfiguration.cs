@@ -8,10 +8,19 @@ using Playnite.SDK;
 namespace UnnamedTrackingPlaynite;
 
 [DataContract]
+internal sealed class SavePathEntry
+{
+    [DataMember(Name = "name")]
+    public string Name { get; set; } = "";
+    [DataMember(Name = "path")]
+    public string Path { get; set; } = "";
+}
+
+[DataContract]
 internal sealed class SaveGameConfiguration
 {
     [DataMember(Name = "save_paths")]
-    public List<string> SavePaths { get; set; } = new List<string>();
+    public List<SavePathEntry> SavePaths { get; set; } = new List<SavePathEntry>();
     [DataMember(Name = "upload_on_game_stop")]
     public bool UploadOnGameStop { get; set; }
     [DataMember(Name = "download_on_game_start")]
