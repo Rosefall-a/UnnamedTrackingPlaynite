@@ -50,10 +50,13 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         yield return new SidebarItem
         {
             Title = "Unnamed Tracking",
-            Type = SiderbarItemType.Button,
-            Activated = OpenApplicationView
+            Type = SiderbarItemType.View,
+            Opened = OpenSaveSyncDashboard,
+            Closed = () => { }
         };
     }
+
+    private System.Windows.Controls.Control OpenSaveSyncDashboard() => new SaveSyncDashboard(PlayniteApi, _saveSync);
 
     private void OpenApplicationView()
     {
@@ -227,22 +230,26 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
             };
             yield return new GameMenuItem
             {
-                Description = "Save sync|Configure save locations",
+                MenuSection = "Save sync",
+                Description = "Configure save locations",
                 Action = _ => ConfigureSaveGame(game)
             };
             yield return new GameMenuItem
             {
-                Description = "Save sync|" + (config.UploadOnGameStop ? "Disable upload on game stop" : "Enable upload on game stop"),
+                MenuSection = "Save sync",
+                Description = config.UploadOnGameStop ? "Disable upload on game stop" : "Enable upload on game stop",
                 Action = _ => SetSaveSyncDirection(game, true, !config.UploadOnGameStop)
             };
             yield return new GameMenuItem
             {
-                Description = "Save sync|" + (config.DownloadOnGameStart ? "Disable download on game start" : "Enable download on game start"),
+                MenuSection = "Save sync",
+                Description = config.DownloadOnGameStart ? "Disable download on game start" : "Enable download on game start",
                 Action = _ => SetSaveSyncDirection(game, false, !config.DownloadOnGameStart)
             };
             yield return new GameMenuItem
             {
-                Description = "Save sync|Download latest save now",
+                MenuSection = "Save sync",
+                Description = "Download latest save now",
                 Action = _ => { var ignored = SyncSaveNow(game, false); }
             };
         }
