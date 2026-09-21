@@ -405,8 +405,8 @@ internal sealed class SaveSyncManager
         Guid archiveId,
         string name)
     {
-        var body = Encoding.UTF8.GetBytes(
-            "{\\"name\\":\\"" + name.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\\"}");
+        var escapedName = name.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        var body = Encoding.UTF8.GetBytes("{\"name\":\"" + escapedName + "\"}");
 
         var request = (HttpWebRequest)WebRequest.Create(
             apiUrl.TrimEnd('/') + $"/api/game/{gameId}/archives/{archiveId}");
