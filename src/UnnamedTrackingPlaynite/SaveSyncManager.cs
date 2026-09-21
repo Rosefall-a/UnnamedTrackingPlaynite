@@ -246,6 +246,18 @@ internal sealed class SaveSyncManager
         }
     }
 
+    internal SaveSyncStatus GetStatus(Game game)
+    {
+        var config = store.For(game.Id);
+        var files = CollectFiles(config.SavePaths.Select(x => x.Path));
+        if (config.SavePaths.Count == 0)
+            return new SaveSyncStatus("Not configured", 0, config.UploadOnGameStop, config.DownloadOnGameStart);
+        if (files.Count == 0)
+            return new SaveSyncStatus("No local save files", 0, config.UploadOnGameStop, config.DownloadOnGameStart);
+        var changed = !string.Equals(ReadFingerprint(game.Id), Fingerprint(game.Id, config.SavePaths), StringComparison.Ordinal);
+        return new SaveSyncStatus(changed ? "Local changes pending" : "Up to date", files.Count, config.UploadOnGameStop, config.DownloadOnGameStart);
+    }
+
     private string ReadFingerprint(Guid gameId)
     {
         var path = Path.Combine(Path.GetTempPath(), "UnnamedTrackingSaveSync", gameId.ToString("N") + ".txt");
