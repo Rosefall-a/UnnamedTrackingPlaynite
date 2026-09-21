@@ -233,8 +233,8 @@ internal sealed class SaveSyncManager
         var boundary = "----------------" + Guid.NewGuid().ToString("N");
         var zipBytes = File.ReadAllBytes(zip);
         var header = Encoding.UTF8.GetBytes(
-            $"--{boundary}\r\nContent-Disposition: form-data; name="name"\r\n\r\nPlaynite Save\r\n" +
-            $"--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="playnite-save.zip"\r\n" +
+            $"--{boundary}\r\nContent-Disposition: form-data; name=\\"name\\"\r\n\r\nPlaynite Save\r\n" +
+            $"--{boundary}\r\nContent-Disposition: form-data; name=\\"file\\"; filename=\\"playnite-save.zip\\"\r\n" +
             "Content-Type: application/zip\r\n\r\n");
         var tail = Encoding.UTF8.GetBytes($"\r\n--{boundary}--\r\n");
         var body = new byte[header.Length + zipBytes.Length + tail.Length];
