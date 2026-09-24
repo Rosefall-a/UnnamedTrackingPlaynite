@@ -266,6 +266,16 @@ internal sealed class UnnamedTrackingSyncClient
         await ApplyAtLauncherParentAsync(apiUrl, authValue, remote.Id, game, remoteGames).ConfigureAwait(false);
     }
 
+    public async Task<bool> IsGameLinkedAsync(string apiUrl, string authValue, Guid playniteGuid)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
+        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+        if (playniteGuid == Guid.Empty) return false;
+
+        var existing = await GetExistingGamesAsync(apiUrl, authValue).ConfigureAwait(false);
+        return existing.Values.Any(game => game.PlayniteGuid == playniteGuid);
+    }
+
     public async Task<bool> TestConnectionAsync(string apiUrl, string authValue)
     {
         if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
@@ -297,9 +307,30 @@ internal sealed class UnnamedTrackingSyncClient
 
     private async Task<Guid> CreateGameAsync(string apiUrl, string authValue, UnnamedTrackingSyncGamePayload payload)
     {
-        var response = await SendJsonAsync(apiUrl.TrimEnd('/') + CreatePath, authValue, "POST", Serialize(payload)).ConfigureAwait(false);
+        // Create with a deliberately simple title first. The PATCH immediately
+        // afterward applies the authoritative Playnite metadata.
+        var createPayload = new UnnamedTrackingSyncGamePayload
+        {
+            Title = "Playnite Sync " + payload.PlayniteGuid.ToString("N"),
+            FolderLocation = payload.FolderLocation,
+            PlayniteGuid = payload.PlayniteGuid
+        };
+
+        var response = await SendJsonAsync(
+            apiUrl.TrimEnd('/') + CreatePath,
+            authValue,
+            "POST",
+            Serialize(createPayload)).ConfigureAwait(false);
         var created = Deserialize<UnnamedTrackingSyncCreatedGame>(response);
-        if (created == null || created.Id == Guid.Empty) throw new InvalidOperationException("Game Create succeeded but the API did not return a game ID.");
+        if (created == null || created.Id == Guid.Empty)
+            throw new InvalidOperationException("Game Create succeeded but the API did not return a game ID.");
+
+        await SendJsonAsync(
+            apiUrl.TrimEnd('/') + "/api/game/update/" + created.Id,
+            authValue,
+            "PATCH",
+            Serialize(payload)).ConfigureAwait(false);
+
         return created.Id;
     }
 

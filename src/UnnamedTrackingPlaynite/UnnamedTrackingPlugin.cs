@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Controls;
 using Playnite.SDK;
 using Playnite.SDK.Events;
@@ -17,6 +18,8 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
     private readonly ILogger _logger;
     private readonly UnnamedTrackingSyncClient _syncClient;
+    private readonly SaveSyncManager _saveSync;
+    private IWebView? _applicationView;
     private CancellationTokenSource? syncCancellation;
 
     public UnnamedTrackingSettings Settings { get; }
@@ -30,6 +33,7 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
 
         _logger = LogManager.GetLogger();
         _syncClient = new UnnamedTrackingSyncClient(_logger, api);
+        _saveSync = new SaveSyncManager(GetPluginUserDataPath(), _logger);
         Settings = new UnnamedTrackingSettings(this);
     }
 
@@ -43,13 +47,38 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         };
     }
 
-    public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
+    public override IEnumerable<SidebarItem> GetSidebarItems()
     {
-        yield return new GameMenuItem
+        yield return new SidebarItem
         {
-            Description = "Sync selected games to Unnamed Tracking",
-            Action = menuArgs => { _ = SyncLibraryAsync(menuArgs.Games.ToList()); }
+            Title = "Unnamed Tracking",
+            Type = SiderbarItemType.View,
+            Opened = OpenSaveSyncDashboard,
+            Closed = () => { }
         };
+    }
+
+    private System.Windows.Controls.Control OpenSaveSyncDashboard() => new SaveSyncDashboard(
+        PlayniteApi,
+        _saveSync,
+        ConfigureSaveGame,
+        async (game, upload) => await SyncSaveNow(game, upload).ConfigureAwait(true));
+
+    private void OpenApplicationView()
+    {
+        if (_applicationView == null)
+        {
+            _applicationView = PlayniteApi.WebViews.CreateView(new WebViewSettings
+            {
+                JavaScriptEnabled = true,
+                WindowWidth = 1280,
+                WindowHeight = 800
+            });
+        }
+
+        if (Uri.TryCreate(Settings.ApiUrl.TrimEnd('/') + "/", UriKind.Absolute, out var uri))
+            _applicationView.Navigate(uri.ToString());
+        _applicationView.Open();
     }
 
     public override ISettings GetSettings(bool firstRunSettings)
@@ -90,12 +119,34 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
         return _syncClient.TestConnectionAsync(Settings.ApiUrl, Settings.AuthValue);
     }
 
+    public override void OnGameStarting(OnGameStartingEventArgs args)
+    {
+        var game = args?.Game;
+        if (game == null) return;
+        var config = _saveSync.Configuration(game.Id);
+        if (config.DownloadOnGameStart && HasCredentials)
+            _ = RunSaveSyncAsync(() => _saveSync.DownloadAsync(game, Settings.ApiUrl, Settings.AuthValue), $"download save for '{game.Name}'");
+    }
+
     public override void OnGameStopped(OnGameStoppedEventArgs args)
     {
         var game = args?.Game;
-        if (!Settings.SyncOnGameStopped || game == null) return;
+        if (game == null) return;
 
-        _ = SyncStoppedGameAsync(game);
+        if (Settings.SyncOnGameStopped)
+            _ = SyncStoppedGameAsync(game);
+
+        var config = _saveSync.Configuration(game.Id);
+        if (config.UploadOnGameStop && HasCredentials)
+            _ = RunSaveSyncAsync(() => _saveSync.UploadAsync(game, Settings.ApiUrl, Settings.AuthValue, true), $"upload save for '{game.Name}'");
+    }
+
+    private bool HasCredentials => !string.IsNullOrWhiteSpace(Settings.ApiUrl) && !string.IsNullOrWhiteSpace(Settings.AuthValue);
+
+    private async Task RunSaveSyncAsync(Func<Task> action, string operation)
+    {
+        try { await action().ConfigureAwait(false); }
+        catch (Exception ex) { _logger.Error($"Could not {operation}: {ex}"); }
     }
 
     private async Task SyncStoppedGameAsync(Game game)
@@ -131,6 +182,178 @@ public sealed class UnnamedTrackingPlugin : GenericPlugin
                 }
             });
         }
+    }
+
+    private void ConfigureSaveGame(Game game)
+    {
+        var current = _saveSync.Configuration(game.Id);
+        var dialog = new SavePathDialog(current.SavePaths, game.InstallDirectory, dir => PlayniteApi.Dialogs.SelectFolder(dir));
+        var window = PlayniteApi.Dialogs.CreateWindow(new WindowCreationOptions
+        {
+            ShowMinimizeButton = false,
+            ShowMaximizeButton = false,
+            ShowCloseButton = true
+        });
+        window.Title = "Unnamed Tracking saves — " + game.Name;
+        window.Content = dialog;
+        window.Width = 680;
+        window.Height = 360;
+        window.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        window.Owner = PlayniteApi.Dialogs.GetCurrentAppWindow();
+        window.ShowDialog();
+
+        if (!dialog.Saved) return;
+        _saveSync.SaveConfiguration(game.Id, dialog.Entries, current.UploadOnGameStop, current.DownloadOnGameStart);
+        PlayniteApi.Dialogs.ShowMessage("Saved " + dialog.Entries.Length + " local save path(s) for " + game.Name + ".", "Unnamed Tracking");
+    }
+
+    private void ToggleSaveSync(Game game, bool upload, bool download)
+    {
+        var current = _saveSync.Configuration(game.Id);
+        if (current.SavePaths.Count == 0)
+        {
+            ConfigureSaveGame(game);
+            current = _saveSync.Configuration(game.Id);
+        }
+        _saveSync.SaveConfiguration(game.Id, current.SavePaths, upload, download);
+        PlayniteApi.Dialogs.ShowMessage("Save sync updated for " + game.Name + ". Upload on stop: " + upload + ". Download on start: " + download + ".", "Unnamed Tracking");
+    }
+
+    private async Task SyncSaveNow(Game game, bool upload)
+    {
+        if (!HasCredentials)
+        {
+            PlayniteApi.Dialogs.ShowErrorMessage("Configure the Unnamed Tracking API URL and API key first.", "Unnamed Tracking");
+            return;
+        }
+
+        try
+        {
+            var linked = await _syncClient.IsGameLinkedAsync(Settings.ApiUrl, Settings.AuthValue, game.Id).ConfigureAwait(true);
+            if (!linked)
+            {
+                if (!ConfirmSyncGame(game)) return;
+
+                var result = await _syncClient.UploadLibraryAsync(
+                    Settings.ApiUrl,
+                    Settings.AuthValue,
+                    new[] { game },
+                    Settings.IgnoreTag).ConfigureAwait(true);
+
+                if (result.SucceededGames != 1)
+                {
+                    var failure = result.Failures.FirstOrDefault();
+                    var failureBody = failure?.ResponseBody;
+                    throw new InvalidOperationException(
+                        "Could not sync the game to Unnamed Tracking." +
+                        (string.IsNullOrWhiteSpace(failureBody) ? string.Empty : " " + failureBody));
+                }
+            }
+
+            if (upload) await _saveSync.UploadAsync(game, Settings.ApiUrl, Settings.AuthValue);
+            else await _saveSync.DownloadAsync(game, Settings.ApiUrl, Settings.AuthValue);
+            PlayniteApi.Dialogs.ShowMessage(upload ? "Game and save uploaded successfully." : "Game synced and latest cloud save downloaded successfully.", "Unnamed Tracking");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Manual save sync failed for '" + game.Name + "': " + ex);
+            PlayniteApi.Dialogs.ShowErrorMessage(ex.Message, "Unnamed Tracking");
+        }
+    }
+
+    private bool ConfirmSyncGame(Game game)
+    {
+        var panel = new StackPanel { Margin = new Thickness(18) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "'" + game.Name + "' is not linked to an Unnamed Tracking game yet. Sync the game to Unnamed Tracking first, then continue with the save sync?",
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 520
+        });
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 18, 0, 0)
+        };
+        var cancel = new Button { Content = "Cancel", MinWidth = 90, Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(12, 6, 12, 6) };
+        var sync = new Button { Content = "Sync game", MinWidth = 100, Padding = new Thickness(12, 6, 12, 6) };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(sync);
+        panel.Children.Add(buttons);
+
+        var window = PlayniteApi.Dialogs.CreateWindow(new WindowCreationOptions
+        {
+            ShowMinimizeButton = false,
+            ShowMaximizeButton = false,
+            ShowCloseButton = true
+        });
+        window.Title = "Unnamed Tracking — Sync game";
+        window.Content = panel;
+        window.Width = 580;
+        window.SizeToContent = SizeToContent.Height;
+        window.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        window.Owner = PlayniteApi.Dialogs.GetCurrentAppWindow();
+
+        var shouldSync = false;
+        sync.Click += (sender, args) => { shouldSync = true; window.DialogResult = true; };
+        cancel.Click += (sender, args) => { shouldSync = false; window.DialogResult = false; };
+        window.ShowDialog();
+        return shouldSync;
+    }
+
+    public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
+    {
+        foreach (var game in args.Games)
+        {
+            var config = _saveSync.Configuration(game.Id);
+            yield return new GameMenuItem
+            {
+                Description = "Upload save now",
+                Action = _ => { var ignored = SyncSaveNow(game, true); }
+            };
+            yield return new GameMenuItem
+            {
+                MenuSection = "Save sync",
+                Description = "Configure save locations",
+                Action = _ => ConfigureSaveGame(game)
+            };
+            yield return new GameMenuItem
+            {
+                MenuSection = "Save sync",
+                Description = config.UploadOnGameStop ? "Disable upload on game stop" : "Enable upload on game stop",
+                Action = _ => SetSaveSyncDirection(game, true, !config.UploadOnGameStop)
+            };
+            yield return new GameMenuItem
+            {
+                MenuSection = "Save sync",
+                Description = config.DownloadOnGameStart ? "Disable download on game start" : "Enable download on game start",
+                Action = _ => SetSaveSyncDirection(game, false, !config.DownloadOnGameStart)
+            };
+            yield return new GameMenuItem
+            {
+                MenuSection = "Save sync",
+                Description = "Download latest save now",
+                Action = _ => { var ignored = SyncSaveNow(game, false); }
+            };
+        }
+    }
+
+    private void SetSaveSyncDirection(Game game, bool upload, bool enabled)
+    {
+        var current = _saveSync.Configuration(game.Id);
+        if (current.SavePaths.Count == 0)
+        {
+            ConfigureSaveGame(game);
+            current = _saveSync.Configuration(game.Id);
+        }
+
+        _saveSync.SaveConfiguration(
+            game.Id,
+            current.SavePaths,
+            upload ? enabled : current.UploadOnGameStop,
+            upload ? current.DownloadOnGameStart : enabled);
     }
 
     private async Task SyncLibraryAsync(System.Collections.Generic.IEnumerable<Game> games)

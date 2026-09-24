@@ -1,0 +1,108 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
+using Playnite.SDK;
+
+namespace UnnamedTrackingPlaynite;
+
+[DataContract]
+public sealed class SavePathEntry
+{
+    [DataMember(Name = "name")]
+    public string Name { get; set; } = "";
+    [DataMember(Name = "path")]
+    public string Path { get; set; } = "";
+}
+
+[DataContract]
+internal sealed class SaveGameConfiguration
+{
+    [DataMember(Name = "save_paths")]
+    public List<SavePathEntry> SavePaths { get; set; } = new List<SavePathEntry>();
+    [DataMember(Name = "upload_on_game_stop")]
+    public bool UploadOnGameStop { get; set; }
+    [DataMember(Name = "download_on_game_start")]
+    public bool DownloadOnGameStart { get; set; }
+    // Remote archive ids are keyed by the configured local path so each save
+    // location keeps one durable archive and future uploads become versions.
+    [DataMember(Name = "remote_archive_ids")]
+    public Dictionary<string, Guid> RemoteArchiveIds { get; set; } = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+    [DataMember(Name = "location_fingerprints")]
+    public Dictionary<string, string> LocationFingerprints { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+}
+
+[DataContract]
+internal sealed class SaveSyncConfiguration
+{
+    [DataMember(Name = "games")]
+    public Dictionary<Guid, SaveGameConfiguration> Games { get; set; } = new Dictionary<Guid, SaveGameConfiguration>();
+}
+
+internal sealed class SaveSyncStore
+{
+    private readonly string path;
+    private readonly ILogger logger;
+    public SaveSyncConfiguration Data { get; private set; }
+
+    public SaveSyncStore(string directory, ILogger logger)
+    {
+        this.logger = logger;
+        Directory.CreateDirectory(directory);
+        path = Path.Combine(directory, "save-sync.json");
+        Data = Load();
+    }
+
+    public SaveGameConfiguration For(Guid gameId)
+    {
+        if (Data.Games == null)
+            Data.Games = new Dictionary<Guid, SaveGameConfiguration>();
+
+        if (!Data.Games.TryGetValue(gameId, out var config) || config == null)
+        {
+            config = new SaveGameConfiguration();
+            Data.Games[gameId] = config;
+        }
+
+        // DataContractJsonSerializer does not apply property initializers when
+        // a member is absent/null in an older save-sync.json. Normalize those
+        // collections before any dashboard or sync code touches them.
+        config.SavePaths ??= new List<SavePathEntry>();
+        config.RemoteArchiveIds ??= new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        config.LocationFingerprints ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        return config;
+    }
+
+    public void Save()
+    {
+        try
+        {
+            var serializer = new DataContractJsonSerializer(typeof(SaveSyncConfiguration));
+            using (var stream = File.Create(path))
+                serializer.WriteObject(stream, Data);
+        }
+        catch (Exception ex)
+        {
+            logger.Error($"Could not save local save-sync configuration: {ex}");
+        }
+    }
+
+    private SaveSyncConfiguration Load()
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                var serializer = new DataContractJsonSerializer(typeof(SaveSyncConfiguration));
+                using (var stream = File.OpenRead(path))
+                    return (SaveSyncConfiguration)serializer.ReadObject(stream);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.Error($"Could not load local save-sync configuration; using defaults: {ex}");
+        }
+        return new SaveSyncConfiguration();
+    }
+}
