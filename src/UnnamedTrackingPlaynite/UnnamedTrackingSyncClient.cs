@@ -628,6 +628,14 @@ internal sealed class UnnamedTrackingSyncClient
         if (status.Contains("mastered")) return "MASTERED";
         if (status.Contains("beaten") || status.Contains("completed") || status == "complete") return "BEATEN";
         if (status.Contains("played")) return "PLAYED";
-        return game.Playtime > 0 ? "PLAYED" : "BACKLOG";
+
+        // Playnite allows custom completion statuses. Never send an arbitrary
+        // custom name to the API: the server intentionally validates status
+        // against its finite GameStatus enum. An unknown custom status has no
+        // safe one-to-one mapping, so treat it as unclassified backlog. Only
+        // use playtime as a fallback when Playnite has no completion status at all.
+        return string.IsNullOrWhiteSpace(status)
+            ? (game.Playtime > 0 ? "PLAYED" : "BACKLOG")
+            : "BACKLOG";
     }
 }
