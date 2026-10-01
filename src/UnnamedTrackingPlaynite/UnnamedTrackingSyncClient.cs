@@ -313,7 +313,8 @@ internal sealed class UnnamedTrackingSyncClient
         {
             Title = "Playnite Sync " + payload.PlayniteGuid.ToString("N"),
             FolderLocation = payload.FolderLocation,
-            PlayniteGuid = payload.PlayniteGuid
+            PlayniteGuid = payload.PlayniteGuid,
+            Status = "BACKLOG"
         };
 
         var response = await SendJsonAsync(
