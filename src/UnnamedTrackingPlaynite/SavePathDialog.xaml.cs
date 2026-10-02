@@ -11,7 +11,7 @@ public partial class SavePathDialog : UserControl
 {
     private readonly Func<string, string> _selectFolder;
     private readonly string _initialDirectory;
-    private sealed class Row { public TextBox? Name; public TextBox? Path; }
+    private sealed class Row { public TextBox? Name; public TextBox? Path; public bool IsFile; }
     private readonly List<Row> _rows = new List<Row>();
 
     public bool Saved { get; private set; }
@@ -19,11 +19,10 @@ public partial class SavePathDialog : UserControl
         .Select(x => new SavePathEntry
         {
             Name = x.Name?.Text?.Trim() ?? "Save location",
-            Path = Environment.ExpandEnvironmentVariables(x.Path?.Text?.Trim() ?? string.Empty)
+            Path = Environment.ExpandEnvironmentVariables(x.Path?.Text?.Trim() ?? string.Empty),
+            IsFile = x.IsFile
         })
         .Where(x => !string.IsNullOrWhiteSpace(x.Path))
-        .GroupBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
-        .Select(x => x.First())
         .ToArray();
 
     public SavePathDialog(IEnumerable<SavePathEntry> entries, string initialDirectory, Func<string, string> selectFolder)
@@ -33,7 +32,7 @@ public partial class SavePathDialog : UserControl
         _initialDirectory = initialDirectory;
 
         foreach (var entry in entries ?? Enumerable.Empty<SavePathEntry>())
-            AddRow(entry.Name, entry.Path);
+            AddRow(entry.Name, entry.Path, entry.IsFile || File.Exists(entry.Path));
     }
 
     private void Add_Click(object sender, RoutedEventArgs e)
@@ -61,11 +60,11 @@ public partial class SavePathDialog : UserControl
         if (dialog.ShowDialog(Window.GetWindow(this)) == true)
         {
             var name = Path.GetFileName(dialog.FileName);
-            AddRow(string.IsNullOrWhiteSpace(name) ? "Save file" : name, dialog.FileName);
+            AddRow(string.IsNullOrWhiteSpace(name) ? "Save file" : name, dialog.FileName, true);
         }
     }
 
-    private void AddRow(string name, string path)
+    private void AddRow(string name, string path, bool isFile = false)
     {
         var nameBox = new TextBox { Text = name ?? "Save location", Margin = new Thickness(0, 0, 8, 8) };
         var pathBox = new TextBox { Text = path ?? "", Margin = new Thickness(0, 0, 8, 8) };
@@ -82,7 +81,7 @@ public partial class SavePathDialog : UserControl
         grid.Children.Add(pathBox);
         grid.Children.Add(remove);
         EntriesPanel.Children.Add(grid);
-        _rows.Add(new Row { Name = nameBox, Path = pathBox });
+        _rows.Add(new Row { Name = nameBox, Path = pathBox, IsFile = isFile });
 
         remove.Click += (sender, args) =>
         {
@@ -99,6 +98,8 @@ public partial class SavePathDialog : UserControl
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
+        try { SaveArchive.ValidatePaths(Entries); }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "Unnamed Tracking"); return; }
         Saved = true;
         Close();
     }

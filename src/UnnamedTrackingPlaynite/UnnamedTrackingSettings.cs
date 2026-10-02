@@ -23,19 +23,19 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
     public string ApiUrl
     {
         get => apiUrl;
-        set => SetValue(ref apiUrl, value);
+        set => SetValue(ref apiUrl, value ?? string.Empty);
     }
 
     public string AuthValue
     {
         get => authValue;
-        set => SetValue(ref authValue, value);
+        set => SetValue(ref authValue, value ?? string.Empty);
     }
 
     public string IgnoreTag
     {
         get => ignoreTag;
-        set => SetValue(ref ignoreTag, value);
+        set => SetValue(ref ignoreTag, value ?? string.Empty);
     }
 
     public bool SyncOnStartup
@@ -64,7 +64,7 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
             {
                 ApiUrl = savedSettings.ApiUrl;
                 AuthValue = savedSettings.AuthValue;
-                IgnoreTag = string.IsNullOrWhiteSpace(savedSettings.IgnoreTag) ? "trackingapp_ignore" : savedSettings.IgnoreTag;
+                IgnoreTag = savedSettings.IgnoreTag ?? "trackingapp_ignore";
                 SyncOnStartup = savedSettings.SyncOnStartup;
                 SyncOnGameStopped = savedSettings.SyncOnGameStopped;
             }
@@ -140,17 +140,14 @@ public sealed class UnnamedTrackingSettings : ObservableObject, ISettings
 
         if (!string.IsNullOrWhiteSpace(ApiUrl))
         {
-            if (!Uri.TryCreate(ApiUrl.Trim(), UriKind.Absolute, out var uri) ||
-                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
-                string.IsNullOrWhiteSpace(uri.Host))
-            {
-                errors.Add("API URL must be a valid HTTP or HTTPS URL.");
-            }
+            try { ApiConnection.ValidateBaseUrl(ApiUrl); }
+            catch (InvalidOperationException ex) { errors.Add(ex.Message); }
         }
 
-        if (!string.IsNullOrWhiteSpace(AuthValue) && !AuthValue.Trim().StartsWith("utk_", StringComparison.Ordinal))
+        if (!string.IsNullOrWhiteSpace(AuthValue))
         {
-            errors.Add("The authentication value must be an Unnamed Tracking API key beginning with utk_.");
+            try { ApiConnection.ValidateKey(AuthValue); }
+            catch (InvalidOperationException ex) { errors.Add(ex.Message); }
         }
 
         if ((SyncOnStartup || SyncOnGameStopped) &&

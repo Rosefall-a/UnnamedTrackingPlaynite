@@ -1,10 +1,10 @@
 <UserControl x:Class="UnnamedTrackingPlaynite.UnnamedTrackingSettingsView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <StackPanel Margin="10">
-        <TextBlock Text="API URL" FontWeight="SemiBold" />
+        <TextBlock Text="Server URL" FontWeight="SemiBold" />
         <TextBox Margin="0,5,0,12" Text="{Binding ApiUrl, UpdateSourceTrigger=PropertyChanged}" ToolTip="Base URL for the Unnamed Tracking service." />
-        <TextBlock Text="Authentication token" FontWeight="SemiBold" />
-        <TextBox Margin="0,5,0,12" Text="{Binding AuthValue, UpdateSourceTrigger=PropertyChanged}" />
-        <TextBlock Text="The authentication token is stored with this Playnite extension's settings." TextWrapping="Wrap" Opacity="0.7" />
+        <TextBlock Text="API key" FontWeight="SemiBold" />
+        <PasswordBox x:Name="ApiKeyBox" Margin="0,5,0,12" Loaded="ApiKeyBox_Loaded" PasswordChanged="ApiKeyBox_PasswordChanged" />
+        <TextBlock Text="The API key is stored with this Playnite extension's settings." TextWrapping="Wrap" Opacity="0.7" />
         <TextBlock Margin="0,10,0,0" Text="Ignore tag" FontWeight="SemiBold" />
         <TextBox Margin="0,5,0,4" Text="{Binding IgnoreTag, UpdateSourceTrigger=PropertyChanged}" />
         <TextBlock Text="Games with this tag are skipped. Leave it empty to disable the ignore filter." TextWrapping="Wrap" Opacity="0.7" />
@@ -16,7 +16,7 @@
         <TextBlock Text="Automatic synchronization" FontWeight="SemiBold" />
         <CheckBox Margin="0,8,0,4" Content="Sync the library when Playnite starts" IsChecked="{Binding SyncOnStartup}" />
         <CheckBox Margin="0,0,0,8" Content="Sync a game after it stops" IsChecked="{Binding SyncOnGameStopped}" />
-        <TextBlock Text="Automatic sync uses the same API key and only updates games already linked to Unnamed Tracking." TextWrapping="Wrap" Opacity="0.7" />
+        <TextBlock Text="Startup sync creates and updates games. Game-stop sync updates linked games. Both skip ignored games." TextWrapping="Wrap" Opacity="0.7" />
 
         <Separator Margin="0,15,0,15" />
 

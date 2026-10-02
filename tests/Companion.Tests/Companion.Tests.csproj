@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net462;net8.0</TargetFrameworks>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- Portable tests execute the same transport/helpers; extension stays net462.
+         NU1701 is expected for the existing net462 SDK reference under net8.
+         SYSLIB0014 is expected for the extension's existing WebRequest transport. -->
+    <NoWarn Condition="'$(TargetFramework)' == 'net8.0'">$(NoWarn);NU1701;SYSLIB0014</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="PlayniteSDK" Version="6.17.0" NoWarn="NU1701" />
+    <Compile Include="../../src/UnnamedTrackingPlaynite/ApiConnection.cs" Link="Production/ApiConnection.cs" />
+    <Compile Include="../../src/UnnamedTrackingPlaynite/UnnamedTrackingSyncClient.cs" Link="Production/UnnamedTrackingSyncClient.cs" />
+    <Compile Include="../../src/UnnamedTrackingPlaynite/UnnamedTrackingUploadResult.cs" Link="Production/UnnamedTrackingUploadResult.cs" />
+    <Compile Include="../../src/UnnamedTrackingPlaynite/SaveArchive.cs" Link="Production/SaveArchive.cs" />
+    <Compile Include="../../src/UnnamedTrackingPlaynite/SaveSyncConfiguration.cs" Link="Production/SaveSyncConfiguration.cs" />
+    <Compile Include="../../src/UnnamedTrackingPlaynite/SaveSyncManager.cs" Link="Production/SaveSyncManager.cs" />
+    <Compile Include="../../src/UnnamedTrackingPlaynite/SaveSyncStatus.cs" Link="Production/SaveSyncStatus.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net462'">
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+  </ItemGroup>
+</Project>
