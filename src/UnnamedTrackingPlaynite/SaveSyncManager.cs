@@ -67,7 +67,12 @@ internal sealed class SaveSyncManager
                 await Task.Run(action, linked.Token).ConfigureAwait(false);
             }
         }
-        catch (WebException) when (linked.IsCancellationRequested) { throw new OperationCanceledException(linked.Token); }
+        catch (WebException ex)
+        {
+            ex.Response?.Dispose();
+            if (linked.IsCancellationRequested) throw new OperationCanceledException(linked.Token);
+            throw;
+        }
         finally { operationGate.Release(); }
     }
 

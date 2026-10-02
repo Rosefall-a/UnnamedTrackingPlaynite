@@ -411,6 +411,7 @@ internal static class Program
                         Requests.Add(new RequestRecord { Method = context.Request.HttpMethod, Path = context.Request.RawUrl ?? "", Body = body, Authorization = context.Request.Headers["Authorization"] ?? "" });
                         Arrived.TrySetResult(true);
                         if (delay) await release.Task;
+                        if (!listener.IsListening) break;
                         var bytes = binaryResponse != null && context.Request.Url!.AbsolutePath.EndsWith("/download", StringComparison.Ordinal) ? binaryResponse(context.Request) : Encoding.UTF8.GetBytes(response(context.Request));
                         context.Response.StatusCode = artworkStatus.HasValue && context.Request.Url!.AbsolutePath.Contains("/assets/") ? artworkStatus.Value : status;
                         context.Response.ContentType = "application/json";
@@ -420,10 +421,10 @@ internal static class Program
                         context.Response.Close();
                     }
                 }
-                catch (Exception ex) when (ex is HttpListenerException || ex is ObjectDisposedException || ex is IOException || ex is InvalidOperationException) { }
+                catch (Exception ex) when (!listener.IsListening || ex is HttpListenerException || ex is ObjectDisposedException || ex is IOException) { }
             });
         }
-        public void Dispose() { release.TrySetResult(true); listener.Close(); worker.GetAwaiter().GetResult(); }
+        public void Dispose() { listener.Close(); release.TrySetResult(true); worker.GetAwaiter().GetResult(); }
     }
     private sealed class TestLogger : ILogger
     {

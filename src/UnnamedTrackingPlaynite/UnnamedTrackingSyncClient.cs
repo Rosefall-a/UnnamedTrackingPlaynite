@@ -526,6 +526,7 @@ internal sealed class UnnamedTrackingSyncClient
                 using (var reader = new StreamReader(stream ?? Stream.Null, Encoding.UTF8)) body = reader.ReadToEnd();
             }
             catch { }
+            finally { response.Dispose(); }
         }
         return new UnnamedTrackingSyncApiException(status, string.IsNullOrEmpty(authValue) ? body : body.Replace(authValue, "[redacted]"), ex);
     }
