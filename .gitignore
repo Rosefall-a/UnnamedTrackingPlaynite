@@ -5,3 +5,7 @@ artifacts/
 *.user
 *.suo
 UpgradeLog.htm
+
+*.pext
+wiki/site/
+__pycache__/
