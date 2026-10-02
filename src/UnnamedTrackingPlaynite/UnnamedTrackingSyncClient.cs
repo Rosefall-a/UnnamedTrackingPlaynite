@@ -40,14 +40,6 @@ internal sealed class UnnamedTrackingSyncGamePayload
 }
 
 [DataContract]
-internal sealed class UnnamedTrackingGameUpdatePayload
-{
-    [DataMember(Name = "playtime_seconds")] public long PlaytimeSeconds { get; set; }
-    [DataMember(Name = "favorite")] public bool Favorite { get; set; }
-    [DataMember(Name = "status")] public string Status { get; set; } = string.Empty;
-}
-
-[DataContract]
 internal sealed class UnnamedTrackingSyncExistingGame
 {
     [DataMember(Name = "id")] public Guid Id { get; set; }
@@ -91,6 +83,17 @@ internal sealed class UnnamedTrackingSyncApiException : Exception
     }
 }
 
+// Captured on Playnite's UI/event context. Workers only use these detached values.
+internal sealed class SyncGameSnapshot
+{
+    public UnnamedTrackingSyncGamePayload Payload { get; set; } = new UnnamedTrackingSyncGamePayload();
+    public string Name => Payload.Title;
+    public Guid Id => Payload.PlayniteGuid;
+    public bool Ignored { get; set; }
+    public string CoverImage { get; set; } = string.Empty;
+    public string BackgroundImage { get; set; } = string.Empty;
+}
+
 internal sealed class UnnamedTrackingSyncClient
 {
     private const string CreatePath = "/api/game/create";
@@ -99,6 +102,7 @@ internal sealed class UnnamedTrackingSyncClient
 
     private readonly ILogger logger;
     private readonly IPlayniteAPI playniteApi;
+    private readonly SemaphoreSlim mutationGate = new SemaphoreSlim(1, 1);
 
     public UnnamedTrackingSyncClient(ILogger logger, IPlayniteAPI playniteApi)
     {
@@ -106,109 +110,162 @@ internal sealed class UnnamedTrackingSyncClient
         this.playniteApi = playniteApi;
     }
 
-    public async Task<UnnamedTrackingUploadResult> UploadLibraryAsync(string apiUrl, string authValue, IEnumerable<Game> games, string ignoreTag = "trackingapp_ignore", CancellationToken cancellationToken = default(CancellationToken), Action<int, int, string>? progress = null)
+    internal List<SyncGameSnapshot> Capture(IEnumerable<Game> games, string ignoreTag)
     {
-        if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
-        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+        return (games ?? Enumerable.Empty<Game>()).Where(game => game != null)
+            .GroupBy(game => game.Id).Select(group => group.First())
+            .Select(game => new SyncGameSnapshot
+            {
+                Payload = ToGamePayload(game),
+                Ignored = HasIgnoreTag(game, ignoreTag),
+                CoverImage = ResolveImage(game.CoverImage),
+                BackgroundImage = ResolveImage(game.BackgroundImage)
+            }).ToList();
+    }
 
-        var sourceGames = (games ?? Enumerable.Empty<Game>())
-            .Where(game => game != null && !HasIgnoreTag(game, ignoreTag))
-            .ToList();
-        var result = new UnnamedTrackingUploadResult { TotalGames = sourceGames.Count };
-        Dictionary<string, UnnamedTrackingSyncExistingGame> existing;
+    private string ResolveImage(string reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference)) return string.Empty;
+        if (Uri.TryCreate(reference, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)) return reference;
+        try { return playniteApi.Database.GetFullFilePath(reference) ?? string.Empty; }
+        catch (Exception ex) { logger.Warn("Could not resolve a Playnite image: " + ex.Message); return string.Empty; }
+    }
+
+    public Task<UnnamedTrackingUploadResult> UploadLibraryAsync(string apiUrl, string authValue, IEnumerable<Game> games, string ignoreTag = "trackingapp_ignore", CancellationToken cancellationToken = default(CancellationToken), Action<int, int, string>? progress = null)
+        => UploadSnapshotsAsync(apiUrl, authValue, Capture(games, ignoreTag), cancellationToken, progress);
+
+    internal async Task<UnnamedTrackingUploadResult> UploadSnapshotsAsync(string apiUrl, string authValue, IEnumerable<SyncGameSnapshot> games, CancellationToken cancellationToken = default(CancellationToken), Action<int, int, string>? progress = null)
+    {
+        apiUrl = ApiConnection.ValidateBaseUrl(apiUrl);
+        ApiConnection.ValidateKey(authValue);
+        await mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var cancellation = ApiConnection.UseCancellation(cancellationToken);
         try
         {
-            existing = await GetExistingGamesAsync(apiUrl, authValue).ConfigureAwait(false);
-        }
-        catch (UnnamedTrackingSyncApiException ex)
-        {
-            foreach (var game in sourceGames) result.Failures.Add(Failure(game, "Lookup", ex));
-            return result;
-        }
-
-        for (var index = 0; index < sourceGames.Count; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var game = sourceGames[index];
-            progress?.Invoke(index, sourceGames.Count, game?.Name ?? "<null game>");
-            if (game == null)
-            {
-                result.Failures.Add(new UnnamedTrackingUploadFailure { GameName = "<null Playnite game>", Operation = "Prepare", ResponseBody = "Playnite returned a null game entry." });
-                continue;
-            }
-
-            string operation = "Prepare";
+            var sourceGames = games.Where(game => !game.Ignored).GroupBy(game => game.Id).Select(group => group.First()).ToList();
+            var result = new UnnamedTrackingUploadResult { TotalGames = sourceGames.Count };
+            if (sourceGames.Count == 0) return result;
+            Dictionary<string, UnnamedTrackingSyncExistingGame> existing;
             try
             {
-                var payload = ToGamePayload(game);
-                UnnamedTrackingSyncExistingGame? remote = null;
-                var found = existing.TryGetValue(payload.FolderLocation, out remote);
-                if (!found)
-                {
-                    remote = existing.Values.FirstOrDefault(item => item.PlayniteGuid == game.Id);
-                    found = remote != null;
-                }
-
-                Guid remoteId;
-                if (found && remote != null)
-                {
-                    operation = "Update";
-                    await SendJsonAsync(apiUrl.TrimEnd('/') + "/api/game/update/" + remote.Id, authValue, "PATCH", Serialize(payload)).ConfigureAwait(false);
-                    remoteId = remote.Id;
-                    await ApplyAtLauncherParentAsync(apiUrl, authValue, remoteId, game, existing).ConfigureAwait(false);
-                }
-                else
-                {
-                    operation = "Create";
-                    remoteId = await CreateGameAsync(apiUrl, authValue, payload).ConfigureAwait(false);
-                    await ApplyAtLauncherParentAsync(apiUrl, authValue, remoteId, game, existing).ConfigureAwait(false);
-                }
-
-                operation = "Artwork (key art)";
-                try
-                {
-                    await UploadCoverIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
-                }
-                catch (UnnamedTrackingSyncApiException ex)
-                {
-                    result.Warnings.Add(Failure(game, operation, ex));
-                    logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} warning for '{game.Name}' ({game.Id}): HTTP {ex.StatusCode}: {ex.ResponseBody}");
-                }
-
-                operation = "Artwork (banner)";
-                try
-                {
-                    await UploadBannerIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
-                }
-                catch (UnnamedTrackingSyncApiException ex)
-                {
-                    result.Warnings.Add(Failure(game, operation, ex));
-                    logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} warning for '{game.Name}' ({game.Id}): HTTP {ex.StatusCode}: {ex.ResponseBody}");
-                }
-
-                result.SucceededGames++;
-                progress?.Invoke(index + 1, sourceGames.Count, game.Name ?? "<unnamed game>");
+                existing = await GetExistingGamesAsync(apiUrl, authValue, cancellationToken).ConfigureAwait(false);
             }
             catch (UnnamedTrackingSyncApiException ex)
             {
-                result.Failures.Add(Failure(game, operation, ex));
-                logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} failed for '{game.Name}' ({game.Id}): HTTP {ex.StatusCode}: {ex.ResponseBody}");
+                foreach (var game in sourceGames) result.Failures.Add(Failure(game, "Lookup", ex));
+                return result;
             }
-            catch (Exception ex)
+
+            for (var index = 0; index < sourceGames.Count; index++)
             {
-                result.Failures.Add(new UnnamedTrackingUploadFailure { GameName = game.Name ?? "<unnamed game>", GameId = game.Id, Operation = operation, ResponseBody = ex.Message });
-                logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} failed for '{game.Name}' ({game.Id}): {ex}");
+                cancellationToken.ThrowIfCancellationRequested();
+                var game = sourceGames[index];
+                progress?.Invoke(index, sourceGames.Count, game?.Name ?? "<null game>");
+                if (game == null)
+                {
+                    result.Failures.Add(new UnnamedTrackingUploadFailure { GameName = "<null Playnite game>", Operation = "Prepare", ResponseBody = "Playnite returned a null game entry." });
+                    continue;
+                }
+
+                string operation = "Prepare";
+                try
+                {
+                    var payload = game.Payload;
+                    var remote = MatchGame(existing.Values, payload);
+                    var found = remote != null;
+                    // Keep an existing remote folder stable when a Playnite title changes.
+                    if (remote != null) payload.FolderLocation = remote.FolderLocation;
+
+                    Guid remoteId;
+                    if (found && remote != null)
+                    {
+                        operation = "Update";
+                        await SendJsonAsync(apiUrl.TrimEnd('/') + "/api/game/update/" + remote.Id, authValue, "PATCH", Serialize(payload)).ConfigureAwait(false);
+                        remoteId = remote.Id;
+                        await ApplyAtLauncherParentAsync(apiUrl, authValue, remoteId, game, existing).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        operation = "Create";
+                        remoteId = await CreateGameAsync(apiUrl, authValue, payload).ConfigureAwait(false);
+                        await ApplyAtLauncherParentAsync(apiUrl, authValue, remoteId, game, existing).ConfigureAwait(false);
+                    }
+
+                    existing[remoteId.ToString()] = new UnnamedTrackingSyncExistingGame
+                    {
+                        Id = remoteId,
+                        PlayniteGuid = game.Id,
+                        FolderLocation = payload.FolderLocation,
+                        Title = payload.Title,
+                        Source = payload.Source
+                    };
+                    operation = "Artwork (key art)";
+                    try
+                    {
+                        await UploadCoverIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+                    }
+                    catch (UnnamedTrackingSyncApiException ex)
+                    {
+                        result.Warnings.Add(Failure(game, operation, ex));
+                        logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} warning for '{game.Name}' ({game.Id}): HTTP {ex.StatusCode}");
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        result.Warnings.Add(new UnnamedTrackingUploadFailure { GameName = game.Name, GameId = game.Id, Operation = operation, ResponseBody = ex.Message });
+                        logger.Warn("Artwork warning for '" + game.Name + "': " + ex.Message);
+                    }
+
+                    operation = "Artwork (banner)";
+                    try
+                    {
+                        await UploadBannerIfAvailableAsync(apiUrl, authValue, remoteId, game).ConfigureAwait(false);
+                    }
+                    catch (UnnamedTrackingSyncApiException ex)
+                    {
+                        result.Warnings.Add(Failure(game, operation, ex));
+                        logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} warning for '{game.Name}' ({game.Id}): HTTP {ex.StatusCode}");
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        result.Warnings.Add(new UnnamedTrackingUploadFailure { GameName = game.Name, GameId = game.Id, Operation = operation, ResponseBody = ex.Message });
+                        logger.Warn("Artwork warning for '" + game.Name + "': " + ex.Message);
+                    }
+
+                    result.SucceededGames++;
+                    progress?.Invoke(index + 1, sourceGames.Count, game.Name ?? "<unnamed game>");
+                }
+                catch (UnnamedTrackingSyncApiException ex)
+                {
+                    result.Failures.Add(Failure(game, operation, ex));
+                    logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} failed for '{game.Name}' ({game.Id}): HTTP {ex.StatusCode}");
+                }
+                catch (Exception) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    result.Failures.Add(new UnnamedTrackingUploadFailure { GameName = game.Name ?? "<unnamed game>", GameId = game.Id, Operation = operation, ResponseBody = ex.Message });
+                    logger.Error($"Unnamed Tracking {operation.ToLowerInvariant()} failed for '{game.Name}' ({game.Id}): {ex}");
+                }
             }
+            return result;
         }
-        return result;
+        finally { mutationGate.Release(); }
     }
 
-    public async Task<UnnamedTrackingSyncPreviewResult> PreviewLibraryAsync(string apiUrl, string authValue, IEnumerable<Game> games, string ignoreTag = "trackingapp_ignore", CancellationToken cancellationToken = default(CancellationToken))
+    public Task<UnnamedTrackingSyncPreviewResult> PreviewLibraryAsync(string apiUrl, string authValue, IEnumerable<Game> games, string ignoreTag = "trackingapp_ignore", CancellationToken cancellationToken = default(CancellationToken))
+        => PreviewSnapshotsAsync(apiUrl, authValue, Capture(games, ignoreTag), cancellationToken);
+
+    internal async Task<UnnamedTrackingSyncPreviewResult> PreviewSnapshotsAsync(string apiUrl, string authValue, IEnumerable<SyncGameSnapshot> games, CancellationToken cancellationToken = default(CancellationToken))
     {
         if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
-        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+        ApiConnection.ValidateKey(authValue);
 
-        var sourceGames = (games ?? Enumerable.Empty<Game>()).ToList();
+        var sourceGames = games.GroupBy(game => game.Id).Select(group => group.First()).ToList();
         var result = new UnnamedTrackingSyncPreviewResult { TotalGames = sourceGames.Count };
         var existing = await GetExistingGamesAsync(apiUrl, authValue, cancellationToken).ConfigureAwait(false);
 
@@ -216,16 +273,15 @@ internal sealed class UnnamedTrackingSyncClient
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (game == null) continue;
-            if (HasIgnoreTag(game, ignoreTag))
+            if (game.Ignored)
             {
                 result.Ignored++;
                 result.IgnoredGames.Add(game.Name ?? "<unnamed game>");
                 continue;
             }
 
-            var payload = ToGamePayload(game);
-            var found = existing.TryGetValue(payload.FolderLocation, out var remote) ||
-                        existing.Values.Any(item => item.PlayniteGuid == game.Id);
+            var payload = game.Payload;
+            var found = MatchGame(existing.Values, payload) != null;
             if (found)
             {
                 result.WouldUpdate++;
@@ -240,65 +296,87 @@ internal sealed class UnnamedTrackingSyncClient
         return result;
     }
 
-    public async Task UpdateGameAsync(string apiUrl, string authValue, Game game)
+    public Task<bool> UpdateGameAsync(string apiUrl, string authValue, Game game, string ignoreTag = "trackingapp_ignore", CancellationToken cancellationToken = default(CancellationToken))
+        => UpdateSnapshotAsync(apiUrl, authValue, Capture(new[] { game }, ignoreTag).Single(), cancellationToken);
+
+    internal async Task<bool> UpdateSnapshotAsync(string apiUrl, string authValue, SyncGameSnapshot snapshot, CancellationToken cancellationToken = default(CancellationToken))
     {
         if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
-        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
-        if (game == null) throw new ArgumentNullException(nameof(game));
+        ApiConnection.ValidateKey(authValue);
+        if (snapshot.Ignored) return false;
+        var payload = snapshot.Payload;
+        apiUrl = ApiConnection.ValidateBaseUrl(apiUrl);
+        await mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var cancellation = ApiConnection.UseCancellation(cancellationToken);
+        try
+        {
+            var remoteGames = await GetExistingGamesAsync(apiUrl, authValue, cancellationToken).ConfigureAwait(false);
+            var remote = MatchGame(remoteGames.Values, payload);
+            if (remote == null) return false;
+            payload.FolderLocation = remote.FolderLocation;
 
-        var payload = ToGamePayload(game);
-        var remoteGames = await GetExistingGamesAsync(apiUrl, authValue).ConfigureAwait(false);
-        UnnamedTrackingSyncExistingGame? remote = null;
-        var found = remoteGames.TryGetValue(payload.FolderLocation, out remote);
-        if (!found) remote = remoteGames.Values.FirstOrDefault(item => item.PlayniteGuid == game.Id);
-        if (remote == null) return;
+            // The upstream GameUpdate API supports the full game metadata model.
+            // Keep Playnite edits in sync rather than only sending playtime/favorite/status.
+            // In particular, tags, features, collections, links and Playnite identity are
+            // all supported by the upstream API and should not be silently dropped.
+            await SendJsonAsync(
+                apiUrl.TrimEnd('/') + "/api/game/update/" + remote.Id,
+                authValue,
+                "PATCH",
+                Serialize(payload)).ConfigureAwait(false);
 
-        // The upstream GameUpdate API supports the full game metadata model.
-        // Keep Playnite edits in sync rather than only sending playtime/favorite/status.
-        // In particular, tags, features, collections, links and Playnite identity are
-        // all supported by the upstream API and should not be silently dropped.
-        await SendJsonAsync(
-            apiUrl.TrimEnd('/') + "/api/game/update/" + remote.Id,
-            authValue,
-            "PATCH",
-            Serialize(payload)).ConfigureAwait(false);
-
-        await ApplyAtLauncherParentAsync(apiUrl, authValue, remote.Id, game, remoteGames).ConfigureAwait(false);
+            await ApplyAtLauncherParentAsync(apiUrl, authValue, remote.Id, snapshot, remoteGames).ConfigureAwait(false);
+            return true;
+        }
+        finally { mutationGate.Release(); }
     }
 
-    public async Task<bool> IsGameLinkedAsync(string apiUrl, string authValue, Guid playniteGuid)
+    public async Task<bool> IsGameLinkedAsync(string apiUrl, string authValue, Guid playniteGuid, CancellationToken cancellationToken = default(CancellationToken))
     {
         if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
-        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+        ApiConnection.ValidateKey(authValue);
         if (playniteGuid == Guid.Empty) return false;
 
-        var existing = await GetExistingGamesAsync(apiUrl, authValue).ConfigureAwait(false);
+        var existing = await GetExistingGamesAsync(apiUrl, authValue, cancellationToken).ConfigureAwait(false);
         return existing.Values.Any(game => game.PlayniteGuid == playniteGuid);
     }
 
-    public async Task<bool> TestConnectionAsync(string apiUrl, string authValue)
+    public async Task<bool> TestConnectionAsync(string apiUrl, string authValue, CancellationToken cancellationToken = default(CancellationToken))
     {
         if (string.IsNullOrWhiteSpace(apiUrl)) throw new InvalidOperationException("API URL is not configured.");
-        if (string.IsNullOrWhiteSpace(authValue)) throw new InvalidOperationException("Authentication token is not configured.");
+        ApiConnection.ValidateKey(authValue);
 
-        await SendJsonAsync(
+        apiUrl = ApiConnection.ValidateBaseUrl(apiUrl);
+        using var cancellation = ApiConnection.UseCancellation(cancellationToken);
+        var response = await SendJsonAsync(
             apiUrl.TrimEnd('/') + ListPath + "?skip=0&limit=1",
             authValue,
             "GET",
             null).ConfigureAwait(false);
+        var games = Deserialize<List<UnnamedTrackingSyncExistingGame>>(response);
+        if (games == null || games.Any(game => game == null || game.Id == Guid.Empty))
+            throw new InvalidDataException("The server returned an invalid game list.");
         return true;
     }
 
     private async Task<Dictionary<string, UnnamedTrackingSyncExistingGame>> GetExistingGamesAsync(string apiUrl, string authValue, CancellationToken cancellationToken = default(CancellationToken))
     {
+        apiUrl = ApiConnection.ValidateBaseUrl(apiUrl);
+        using var cancellation = ApiConnection.UseCancellation(cancellationToken);
         var result = new Dictionary<string, UnnamedTrackingSyncExistingGame>(StringComparer.OrdinalIgnoreCase);
         var skip = 0;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var response = await SendJsonAsync(apiUrl.TrimEnd('/') + ListPath + $"?skip={skip}&limit={PageSize}", authValue, "GET", null).ConfigureAwait(false);
-            var games = Deserialize<List<UnnamedTrackingSyncExistingGame>>(response) ?? new List<UnnamedTrackingSyncExistingGame>();
-            foreach (var game in games.Where(item => item != null && !string.IsNullOrWhiteSpace(item.FolderLocation))) result[game.FolderLocation] = game;
+            var games = Deserialize<List<UnnamedTrackingSyncExistingGame>>(response);
+            if (games == null || games.Any(game => game == null || game.Id == Guid.Empty || string.IsNullOrWhiteSpace(game.FolderLocation)))
+                throw new InvalidDataException("The server returned an invalid game list. No games were created.");
+            foreach (var game in games)
+            {
+                if (result.ContainsKey(game.Id.ToString())) throw new InvalidDataException("The server repeated a game while paging the library.");
+                result[game.Id.ToString()] = game;
+            }
             if (games.Count < PageSize) break;
             skip += PageSize;
         }
@@ -307,119 +385,83 @@ internal sealed class UnnamedTrackingSyncClient
 
     private async Task<Guid> CreateGameAsync(string apiUrl, string authValue, UnnamedTrackingSyncGamePayload payload)
     {
-        // Create with a deliberately simple title first. The PATCH immediately
-        // afterward applies the authoritative Playnite metadata.
-        var createPayload = new UnnamedTrackingSyncGamePayload
-        {
-            Title = "Playnite Sync " + payload.PlayniteGuid.ToString("N"),
-            FolderLocation = payload.FolderLocation,
-            PlayniteGuid = payload.PlayniteGuid
-        };
-
         var response = await SendJsonAsync(
             apiUrl.TrimEnd('/') + CreatePath,
             authValue,
             "POST",
-            Serialize(createPayload)).ConfigureAwait(false);
+            Serialize(payload)).ConfigureAwait(false);
         var created = Deserialize<UnnamedTrackingSyncCreatedGame>(response);
         if (created == null || created.Id == Guid.Empty)
             throw new InvalidOperationException("Game Create succeeded but the API did not return a game ID.");
 
-        await SendJsonAsync(
-            apiUrl.TrimEnd('/') + "/api/game/update/" + created.Id,
-            authValue,
-            "PATCH",
-            Serialize(payload)).ConfigureAwait(false);
-
         return created.Id;
     }
 
-    private Task UploadCoverIfAvailableAsync(string apiUrl, string authValue, Guid remoteGameId, Game game)
+    private Task UploadCoverIfAvailableAsync(string apiUrl, string authValue, Guid remoteGameId, SyncGameSnapshot game)
     {
         return UploadImageIfAvailableAsync(apiUrl, authValue, remoteGameId, game.CoverImage, "cover.png", "key_art", "cover", game);
     }
 
-    private Task UploadBannerIfAvailableAsync(string apiUrl, string authValue, Guid remoteGameId, Game game)
+    private Task UploadBannerIfAvailableAsync(string apiUrl, string authValue, Guid remoteGameId, SyncGameSnapshot game)
     {
         return UploadImageIfAvailableAsync(apiUrl, authValue, remoteGameId, game.BackgroundImage, "banner.png", "banner", "banner", game);
     }
 
-    private async Task UploadImageIfAvailableAsync(string apiUrl, string authValue, Guid remoteGameId, string imageReference, string defaultFileName, string assetKind, string imageKind, Game game)
+    private async Task UploadImageIfAvailableAsync(string apiUrl, string authValue, Guid remoteGameId, string imageReference, string defaultFileName, string assetKind, string imageKind, SyncGameSnapshot game)
     {
+        if (string.IsNullOrWhiteSpace(imageReference)) return;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ApiConnection.Token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(60));
+        var fileName = Path.GetFileName(imageReference);
+        if (string.IsNullOrWhiteSpace(fileName)) fileName = defaultFileName;
         byte[] imageData;
-        string fileName;
-        if (!TryReadPlayniteImage(imageReference, defaultFileName, imageKind, game, out imageData, out fileName)) return;
-
+        if (Uri.TryCreate(imageReference, UriKind.Absolute, out var imageUri) &&
+            (imageUri.Scheme == Uri.UriSchemeHttp || imageUri.Scheme == Uri.UriSchemeHttps))
+        {
+            using var download = new WebClient();
+            using var registration = deadline.Token.Register(download.CancelAsync);
+            try { imageData = await download.DownloadDataTaskAsync(imageUri).ConfigureAwait(false); }
+            catch (WebException) when (ApiConnection.Token.IsCancellationRequested) { throw new OperationCanceledException(ApiConnection.Token); }
+        }
+        else
+        {
+            if (!File.Exists(imageReference)) return;
+            imageData = await Task.Run(() => File.ReadAllBytes(imageReference), ApiConnection.Token).ConfigureAwait(false);
+        }
+        if (imageData.Length == 0) return;
         var endpoint = apiUrl.TrimEnd('/') + "/api/game/" + remoteGameId + "/assets/" + assetKind;
         var requestId = Guid.NewGuid().ToString("N");
         var stopwatch = Stopwatch.StartNew();
         logger.Info($"Unnamed Tracking HTTP request {requestId}: POST {endpoint} [multipart upload, file='{fileName}', bytes={imageData.Length}]");
 
         var tempPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + GetSafeExtension(fileName));
-        File.WriteAllBytes(tempPath, imageData);
+        await Task.Run(() => File.WriteAllBytes(tempPath, imageData), ApiConnection.Token).ConfigureAwait(false);
         try
         {
-            using (var client = new WebClient())
+            using (var client = new ApiConnection.UploadClient())
             {
                 client.Headers[HttpRequestHeader.Authorization] = "Bearer " + authValue;
                 client.Headers[HttpRequestHeader.Accept] = "application/json";
+                using var registration = deadline.Token.Register(client.CancelAsync);
                 try
                 {
+                    deadline.Token.ThrowIfCancellationRequested();
                     var response = await client.UploadFileTaskAsync(endpoint, "POST", tempPath).ConfigureAwait(false);
                     stopwatch.Stop();
                     var responseBody = response == null ? string.Empty : Encoding.UTF8.GetString(response);
-                    logger.Info($"Unnamed Tracking HTTP response {requestId}: POST {endpoint} -> success ({stopwatch.ElapsedMilliseconds} ms), body={responseBody}");
+                    logger.Info($"Unnamed Tracking HTTP response {requestId}: POST {endpoint} -> success ({stopwatch.ElapsedMilliseconds} ms)");
                 }
+                catch (WebException) when (ApiConnection.Token.IsCancellationRequested) { throw new OperationCanceledException(ApiConnection.Token); }
                 catch (WebException ex)
                 {
                     stopwatch.Stop();
-                    var apiException = ToApiException(ex);
-                    logger.Error($"Unnamed Tracking HTTP response {requestId}: POST {endpoint} -> HTTP {apiException.StatusCode} ({stopwatch.ElapsedMilliseconds} ms), body={apiException.ResponseBody}");
+                    var apiException = ToApiException(ex, authValue);
+                    logger.Error($"Unnamed Tracking HTTP response {requestId}: POST {endpoint} -> HTTP {apiException.StatusCode} ({stopwatch.ElapsedMilliseconds} ms)");
                     throw apiException;
                 }
             }
         }
         finally { try { File.Delete(tempPath); } catch { } }
-    }
-
-    private bool TryReadPlayniteImage(string imageReference, string defaultFileName, string imageKind, Game game, out byte[] data, out string fileName)
-    {
-        data = Array.Empty<byte>();
-        fileName = defaultFileName;
-        if (string.IsNullOrWhiteSpace(imageReference)) return false;
-
-        try
-        {
-            var path = playniteApi.Database.GetFullFilePath(imageReference);
-            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
-            {
-                data = File.ReadAllBytes(path);
-                fileName = Path.GetFileName(path);
-                return data.Length > 0;
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.Info($"Could not read Playnite {imageKind} for '{game.Name}' ({game.Id}): {ex.Message}");
-        }
-
-        if (Uri.TryCreate(imageReference, UriKind.Absolute, out var uri) &&
-            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
-        {
-            try
-            {
-                using (var client = new WebClient()) data = client.DownloadData(uri);
-                fileName = Path.GetFileName(uri.AbsolutePath);
-                if (string.IsNullOrWhiteSpace(fileName) || !fileName.Contains(".")) fileName = defaultFileName;
-                return data.Length > 0;
-            }
-            catch (Exception ex)
-            {
-                logger.Info($"Could not download Playnite {imageKind} for '{game.Name}' ({game.Id}): {ex.Message}");
-            }
-        }
-
-        return false;
     }
 
     private async Task<string> SendJsonAsync(string endpoint, string authValue, string method, string? body)
@@ -429,12 +471,9 @@ internal sealed class UnnamedTrackingSyncClient
         var bodyBytes = body == null ? Array.Empty<byte>() : Encoding.UTF8.GetBytes(body);
 
         logger.Info($"Unnamed Tracking HTTP request {requestId}: {method} {endpoint} [content-type=application/json; charset=utf-8, bytes={bodyBytes.Length}, keep-alive=false, expect=false]");
-        if (body != null)
-        {
-            logger.Info($"Unnamed Tracking HTTP request {requestId} body: {body}");
-        }
 
-        var request = (HttpWebRequest)WebRequest.Create(endpoint);
+        var request = ApiConnection.CreateRequest(endpoint);
+        using var registration = ApiConnection.RegisterRequest(request);
         request.Method = method;
         request.Accept = "application/json";
         request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
@@ -448,32 +487,33 @@ internal sealed class UnnamedTrackingSyncClient
             request.ContentLength = bodyBytes.Length;
             using (var requestStream = await request.GetRequestStreamAsync().ConfigureAwait(false))
             {
-                await requestStream.WriteAsync(bodyBytes, 0, bodyBytes.Length).ConfigureAwait(false);
+                await requestStream.WriteAsync(bodyBytes, 0, bodyBytes.Length, ApiConnection.Token).ConfigureAwait(false);
             }
         }
 
         try
         {
-            using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+            using (var response = ApiConnection.EnsureSuccess((HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false)))
             using (var stream = response.GetResponseStream())
             using (var reader = new StreamReader(stream ?? Stream.Null, Encoding.UTF8))
             {
                 var responseBody = await reader.ReadToEndAsync().ConfigureAwait(false);
                 stopwatch.Stop();
-                logger.Info($"Unnamed Tracking HTTP response {requestId}: {method} {endpoint} -> HTTP {(int)response.StatusCode} {response.StatusDescription} ({stopwatch.ElapsedMilliseconds} ms), content-type={response.ContentType ?? string.Empty}, bytes={response.ContentLength}, body={responseBody}");
+                logger.Info($"Unnamed Tracking HTTP response {requestId}: {method} {endpoint} -> HTTP {(int)response.StatusCode} {response.StatusDescription} ({stopwatch.ElapsedMilliseconds} ms), content-type={response.ContentType ?? string.Empty}, bytes={response.ContentLength}");
                 return responseBody;
             }
         }
+        catch (WebException) when (ApiConnection.Token.IsCancellationRequested) { throw new OperationCanceledException(ApiConnection.Token); }
         catch (WebException ex)
         {
             stopwatch.Stop();
-            var apiException = ToApiException(ex);
-            logger.Error($"Unnamed Tracking HTTP response {requestId}: {method} {endpoint} -> HTTP {apiException.StatusCode} ({stopwatch.ElapsedMilliseconds} ms), body={apiException.ResponseBody}");
+            var apiException = ToApiException(ex, authValue);
+            logger.Error($"Unnamed Tracking HTTP response {requestId}: {method} {endpoint} -> HTTP {apiException.StatusCode} ({stopwatch.ElapsedMilliseconds} ms)");
             throw apiException;
         }
     }
 
-    private static UnnamedTrackingSyncApiException ToApiException(WebException ex)
+    private static UnnamedTrackingSyncApiException ToApiException(WebException ex, string authValue)
     {
         var response = ex.Response as HttpWebResponse;
         var status = response == null ? 0 : (int)response.StatusCode;
@@ -486,13 +526,18 @@ internal sealed class UnnamedTrackingSyncClient
                 using (var reader = new StreamReader(stream ?? Stream.Null, Encoding.UTF8)) body = reader.ReadToEnd();
             }
             catch { }
+            finally { response.Dispose(); }
         }
-        return new UnnamedTrackingSyncApiException(status, body, ex);
+        return new UnnamedTrackingSyncApiException(status, string.IsNullOrEmpty(authValue) ? body : body.Replace(authValue, "[redacted]"), ex);
     }
 
-    private static UnnamedTrackingUploadFailure Failure(Game game, string operation, UnnamedTrackingSyncApiException ex) => new()
+    private static UnnamedTrackingUploadFailure Failure(SyncGameSnapshot game, string operation, UnnamedTrackingSyncApiException ex) => new()
     {
-        GameName = game?.Name ?? "<unknown game>", GameId = game?.Id, Operation = operation, StatusCode = ex.StatusCode, ResponseBody = ex.ResponseBody
+        GameName = game?.Name ?? "<unknown game>",
+        GameId = game?.Id,
+        Operation = operation,
+        StatusCode = ex.StatusCode,
+        ResponseBody = ex.ResponseBody
     };
 
     private static string Serialize<T>(T value)
@@ -503,7 +548,9 @@ internal sealed class UnnamedTrackingSyncClient
 
     private static T Deserialize<T>(string json)
     {
-        if (string.IsNullOrWhiteSpace(json)) return default!;
+        if (string.IsNullOrWhiteSpace(json)) throw new InvalidDataException("The server returned an empty JSON response.");
+        if (typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(List<>) && !json.TrimStart().StartsWith("[", StringComparison.Ordinal))
+            throw new InvalidDataException("The server returned an object where a JSON array was required.");
         var serializer = new DataContractJsonSerializer(typeof(T));
         using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(json))) return (T)serializer.ReadObject(stream)!;
     }
@@ -542,9 +589,9 @@ internal sealed class UnnamedTrackingSyncClient
         };
     }
 
-    private async Task ApplyAtLauncherParentAsync(string apiUrl, string authValue, Guid remoteId, Game game, Dictionary<string, UnnamedTrackingSyncExistingGame> existing)
+    private async Task ApplyAtLauncherParentAsync(string apiUrl, string authValue, Guid remoteId, SyncGameSnapshot game, Dictionary<string, UnnamedTrackingSyncExistingGame> existing)
     {
-        if (!IsAtLauncherGame(game)) return;
+        if (game.Payload.Source.IndexOf("ATLauncher", StringComparison.OrdinalIgnoreCase) < 0) return;
 
         var minecraft = existing.Values.FirstOrDefault(item =>
             string.Equals(item.Title?.Trim(), "Minecraft", StringComparison.OrdinalIgnoreCase));
@@ -563,16 +610,15 @@ internal sealed class UnnamedTrackingSyncClient
         logger.Info($"Linked ATLauncher game '{game.Name}' ({game.Id}) as a modpack child of Minecraft ({minecraft.Id}).");
     }
 
-    private static bool IsAtLauncherGame(Game game)
+    internal static bool HasIgnoreTag(Game game, string ignoreTag)
     {
-        return string.Equals(game.Source?.Name?.Trim(), "ATLauncher", StringComparison.OrdinalIgnoreCase) ||
-               (game.Source?.Name?.IndexOf("ATLauncher", StringComparison.OrdinalIgnoreCase) >= 0);
+        return MatchesIgnoreTag(OrEmpty(game.Tags).Select(tag => tag?.Name ?? string.Empty), ignoreTag);
     }
 
-    private static bool HasIgnoreTag(Game game, string ignoreTag)
+    internal static bool MatchesIgnoreTag(IEnumerable<string> tags, string ignoreTag)
     {
         if (string.IsNullOrWhiteSpace(ignoreTag)) return false;
-        return OrEmpty(game.Tags).Any(tag => string.Equals(tag?.Name?.Trim(), ignoreTag.Trim(), StringComparison.OrdinalIgnoreCase));
+        return tags.Any(tag => string.Equals(tag?.Trim(), ignoreTag.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetFolderLocation(Game game)
@@ -602,7 +648,18 @@ internal sealed class UnnamedTrackingSyncClient
         return $"playnite-{safeName}-{game.Id:N}";
     }
 
-    private static string GetLegacyFolderLocation(Guid gameId) => "playnite-" + gameId.ToString("N");
+    internal static UnnamedTrackingSyncExistingGame? MatchGame(IEnumerable<UnnamedTrackingSyncExistingGame> games, UnnamedTrackingSyncGamePayload payload)
+    {
+        var byGuid = games.Where(game => game.PlayniteGuid == payload.PlayniteGuid).ToList();
+        if (byGuid.Count > 1) throw new InvalidDataException("More than one remote game has this Playnite GUID. Resolve the duplicate on the server first.");
+        if (byGuid.Count == 1) return byGuid[0];
+        var folders = games.Where(game =>
+            string.Equals(game.FolderLocation, payload.FolderLocation, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(game.FolderLocation, "playnite-" + payload.PlayniteGuid.ToString("N"), StringComparison.OrdinalIgnoreCase)).ToList();
+        if (folders.Count > 1 || folders.Any(game => game.PlayniteGuid.HasValue && game.PlayniteGuid != payload.PlayniteGuid))
+            throw new InvalidDataException("The remote folder belongs to a different or ambiguous Playnite game.");
+        return folders.SingleOrDefault();
+    }
 
     private static string GetSafeExtension(string fileName)
     {
@@ -620,7 +677,12 @@ internal sealed class UnnamedTrackingSyncClient
 
     private static string MapStatus(Game game)
     {
-        var status = game.CompletionStatus?.Name?.Trim().ToLowerInvariant() ?? string.Empty;
+        return NormalizeStatus(game.CompletionStatus?.Name, game.Playtime);
+    }
+
+    internal static string NormalizeStatus(string? name, ulong playtime)
+    {
+        var status = name?.Trim().ToLowerInvariant() ?? string.Empty;
         if (status.Contains("wishlist") || status.Contains("wish list")) return "WISHLIST";
         if (status.Contains("dropped")) return "DROPPED";
         if (status.Contains("hold")) return "ON_HOLD";
@@ -635,7 +697,7 @@ internal sealed class UnnamedTrackingSyncClient
         // safe one-to-one mapping, so treat it as unclassified backlog. Only
         // use playtime as a fallback when Playnite has no completion status at all.
         return string.IsNullOrWhiteSpace(status)
-            ? (game.Playtime > 0 ? "PLAYED" : "BACKLOG")
+            ? (playtime > 0 ? "PLAYED" : "BACKLOG")
             : "BACKLOG";
     }
 }

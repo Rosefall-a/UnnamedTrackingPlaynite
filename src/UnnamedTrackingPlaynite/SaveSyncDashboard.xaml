@@ -13,8 +13,8 @@
         <TextBlock Grid.Row="1" Margin="0,6,0,12"
                    Text="Manage every configured save location, see pending changes, and sync individual games without leaving Playnite."
                    TextWrapping="Wrap" Foreground="#D8D8D8" />
-        <DockPanel Grid.Row="2" Margin="0,0,0,12">
-            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+        <StackPanel Grid.Row="2" Margin="0,0,0,12">
+            <WrapPanel Margin="0,0,0,8">
                 <TextBlock Text="Sort by" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <ComboBox x:Name="SortCombo" Width="150" SelectionChanged="SortCombo_SelectionChanged">
                     <ComboBoxItem Content="Status" IsSelected="True" />
@@ -23,14 +23,16 @@
                 </ComboBox>
                 <Button Content="Expand all" Margin="10,0,0,0" Padding="10,4" Click="ExpandAll_Click" />
                 <Button Content="Collapse all" Margin="6,0,0,0" Padding="10,4" Click="CollapseAll_Click" />
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+            </WrapPanel>
+            <WrapPanel>
+                <Button Content="Open Unnamed Tracking" Click="OpenApplication_Click" Margin="0,0,8,0" />
+                <Button Content="Cancel sync" Click="CancelSync_Click" Margin="0,0,8,0" />
                 <Button x:Name="UploadButton" Content="Sync selected" IsEnabled="False" Margin="6,0,0,0" Padding="10,4" Click="SyncUpload_Click" />
                 <Button x:Name="DownloadButton" Content="Download selected" IsEnabled="False" Margin="6,0,0,0" Padding="10,4" Click="SyncDownload_Click" />
                 <Button x:Name="ConfigureButton" Content="Configure selected" IsEnabled="False" Margin="6,0,0,0" Padding="10,4" Click="Configure_Click" />
                 <TextBlock x:Name="SummaryText" VerticalAlignment="Center" Margin="12,0,0,0" Foreground="#D8D8D8" />
-            </StackPanel>
-        </DockPanel>
+            </WrapPanel>
+        </StackPanel>
         <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
             <StackPanel x:Name="GroupsPanel" />
         </ScrollViewer>

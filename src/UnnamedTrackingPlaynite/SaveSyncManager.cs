@@ -8,6 +8,7 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Playnite.SDK;
 using Playnite.SDK.Models;
@@ -39,55 +40,101 @@ internal sealed class SaveRemoteVersion
     [DataMember(Name = "url")] public string Url { get; set; } = "";
 }
 
+[DataContract]
+internal sealed class SaveArchiveName
+{
+    [DataMember(Name = "name")] public string Name { get; set; } = string.Empty;
+}
+
 internal sealed class SaveSyncManager
 {
     private readonly ILogger logger;
     private readonly SaveSyncStore store;
+    private readonly string backupDirectory;
+    private readonly SemaphoreSlim operationGate = new SemaphoreSlim(1, 1);
+    private readonly CancellationTokenSource shutdown = new CancellationTokenSource();
+    internal void Cancel() => shutdown.Cancel();
+    internal bool IsBusy => operationGate.CurrentCount == 0;
+
+    private async Task RunAsync(Func<Task> action, CancellationToken token)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, shutdown.Token);
+        await operationGate.WaitAsync(linked.Token).ConfigureAwait(false);
+        try
+        {
+            using (ApiConnection.UseCancellation(linked.Token))
+            {
+                await Task.Run(action, linked.Token).ConfigureAwait(false);
+            }
+        }
+        catch (WebException ex)
+        {
+            ex.Response?.Dispose();
+            if (linked.IsCancellationRequested) throw new OperationCanceledException(linked.Token);
+            throw;
+        }
+        finally { operationGate.Release(); }
+    }
 
     public SaveSyncManager(string dataPath, ILogger logger)
     {
         this.logger = logger;
         store = new SaveSyncStore(dataPath, logger);
+        backupDirectory = Path.Combine(dataPath, "save-backups");
     }
 
-    public SaveGameConfiguration Configuration(Guid gameId) => store.For(gameId);
+    public SaveGameConfiguration Configuration(Guid gameId) => store.Snapshot(gameId);
 
     public void SaveConfiguration(Guid gameId, IEnumerable<SavePathEntry> paths, bool uploadOnStop, bool downloadOnStart)
     {
-        var config = store.For(gameId);
-        config.SavePaths = paths
-            .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Path))
-            .Select(x => new SavePathEntry { Name = string.IsNullOrWhiteSpace(x.Name) ? "Save location" : x.Name.Trim(), Path = Environment.ExpandEnvironmentVariables(x.Path.Trim()) })
-            .GroupBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
-            .Select(x => x.First())
-            .ToList();
+        if (IsBusy) throw new InvalidOperationException("Wait for the active save synchronization before editing save locations.");
+        var validated = SaveArchive.ValidatePaths(paths);
+        var config = store.Snapshot(gameId);
+        foreach (var old in config.SavePaths)
+        {
+            var current = validated.FirstOrDefault(path => string.Equals(path.Path, old.Path, StringComparison.OrdinalIgnoreCase));
+            if (current == null || !string.Equals(current.Name, old.Name, StringComparison.Ordinal))
+            {
+                config.RemoteArchiveIds.Remove(old.Path);
+                config.LocationFingerprints.Remove(old.Path);
+            }
+        }
+        config.SavePaths = validated;
         config.UploadOnGameStop = uploadOnStop;
         config.DownloadOnGameStart = downloadOnStart;
-        store.Save();
+        store.Commit(gameId, config);
     }
 
-    public Task UploadAsync(Game game, string apiUrl, string apiKey, bool onlyIfChanged = false) => Task.Run(async () =>
+    public Task UploadAsync(Game game, string apiUrl, string apiKey, bool onlyIfChanged = false, CancellationToken token = default(CancellationToken))
+        => UploadAsync(game.Id, game.Name ?? "<unnamed>", apiUrl, apiKey, onlyIfChanged, token);
+
+    internal Task UploadAsync(Guid gameId, string gameName, string apiUrl, string apiKey, bool onlyIfChanged = false, CancellationToken token = default(CancellationToken)) => RunAsync(async () =>
     {
-        var config = store.For(game.Id);
+        apiUrl = ApiConnection.ValidateBaseUrl(apiUrl);
+        ApiConnection.ValidateKey(apiKey);
+        var config = store.Snapshot(gameId);
+        var locations = SaveArchive.ValidatePaths(config.SavePaths);
         if (config.SavePaths.Count == 0)
         {
-            logger.Info($"No save paths configured for '{game.Name}'.");
+            logger.Info($"No save paths configured for '{gameName}'.");
             return;
         }
 
-        var remoteGameId = await ResolveGameId(apiUrl, apiKey, game.Id).ConfigureAwait(false);
+        var remoteGameId = await ResolveGameId(apiUrl, apiKey, gameId).ConfigureAwait(false);
         if (remoteGameId == Guid.Empty)
-            throw new InvalidOperationException($"'{game.Name}' is not linked to an Unnamed Tracking game yet.");
+            throw new InvalidOperationException($"'{gameName}' is not linked to an Unnamed Tracking game yet.");
 
         var archivesJson = await SendText(
             apiUrl.TrimEnd('/') + $"/api/game/{remoteGameId}/archives/save",
             apiKey,
             "GET").ConfigureAwait(false);
-        var remoteArchives = Deserialize<List<SaveRemoteArchive>>(archivesJson) ?? new List<SaveRemoteArchive>();
+        var remoteArchives = Deserialize<List<SaveRemoteArchive>>(archivesJson) ?? throw new InvalidDataException("The server returned a null archive list.");
 
+        ValidateArchives(remoteArchives);
         var uploadedFiles = 0;
-        foreach (var location in config.SavePaths)
+        foreach (var location in locations)
         {
+            ApiConnection.Token.ThrowIfCancellationRequested();
             var files = CollectFiles(new[] { location.Path });
             if (files.Count == 0)
             {
@@ -95,8 +142,9 @@ internal sealed class SaveSyncManager
                 continue;
             }
 
+            var archiveId = ResolveArchiveId(config, location, remoteArchives);
             var fingerprint = FingerprintLocation(location);
-            if (onlyIfChanged &&
+            if (onlyIfChanged && archiveId != Guid.Empty &&
                 config.LocationFingerprints.TryGetValue(location.Path, out var previousFingerprint) &&
                 string.Equals(previousFingerprint, fingerprint, StringComparison.Ordinal))
             {
@@ -104,7 +152,6 @@ internal sealed class SaveSyncManager
                 continue;
             }
 
-            var archiveId = ResolveArchiveId(config, location, remoteArchives);
             // Migrate the archive produced by the earlier implementation when
             // there was only one configured location. This preserves its history
             // while giving the archive its real save-location name.
@@ -125,6 +172,8 @@ internal sealed class SaveSyncManager
             try
             {
                 CreateZip(location, zip);
+                if (!string.Equals(fingerprint, FingerprintLocation(location), StringComparison.Ordinal))
+                    throw new IOException("Save files changed while the archive was being created. Stop the game and retry.");
 
                 if (archiveId == Guid.Empty)
                 {
@@ -144,6 +193,7 @@ internal sealed class SaveSyncManager
                 }
 
                 config.LocationFingerprints[location.Path] = fingerprint;
+                store.Commit(gameId, config);
                 uploadedFiles += files.Count;
                 logger.Info($"Uploaded {files.Count} save file(s) for '{location.Name}'.");
             }
@@ -153,28 +203,36 @@ internal sealed class SaveSyncManager
             }
         }
 
-        store.Save();
+        store.Commit(gameId, config);
         if (uploadedFiles == 0)
-            logger.Info($"No changed save locations were uploaded for '{game.Name}'.");
-    });
+            logger.Info($"No changed save locations were uploaded for '{gameName}'.");
+    }, token);
 
-    public Task DownloadAsync(Game game, string apiUrl, string apiKey) => Task.Run(async () =>
+    public Task DownloadAsync(Game game, string apiUrl, string apiKey, CancellationToken token = default(CancellationToken))
+        => DownloadAsync(game.Id, game.Name ?? "<unnamed>", apiUrl, apiKey, token);
+
+    internal Task DownloadAsync(Guid gameId, string gameName, string apiUrl, string apiKey, CancellationToken token = default(CancellationToken)) => RunAsync(async () =>
     {
-        var config = store.For(game.Id);
+        apiUrl = ApiConnection.ValidateBaseUrl(apiUrl);
+        ApiConnection.ValidateKey(apiKey);
+        var config = store.Snapshot(gameId);
+        var locations = SaveArchive.ValidatePaths(config.SavePaths);
         if (config.SavePaths.Count == 0) return;
 
-        var remoteGameId = await ResolveGameId(apiUrl, apiKey, game.Id).ConfigureAwait(false);
+        var remoteGameId = await ResolveGameId(apiUrl, apiKey, gameId).ConfigureAwait(false);
         if (remoteGameId == Guid.Empty)
-            throw new InvalidOperationException($"'{game.Name}' is not linked to an Unnamed Tracking game yet.");
+            throw new InvalidOperationException($"'{gameName}' is not linked to an Unnamed Tracking game yet.");
 
         var archiveJson = await SendText(
             apiUrl.TrimEnd('/') + $"/api/game/{remoteGameId}/archives/save",
             apiKey,
             "GET").ConfigureAwait(false);
-        var archives = Deserialize<List<SaveRemoteArchive>>(archiveJson) ?? new List<SaveRemoteArchive>();
+        var archives = Deserialize<List<SaveRemoteArchive>>(archiveJson) ?? throw new InvalidDataException("The server returned a null archive list.");
 
-        foreach (var location in config.SavePaths)
+        ValidateArchives(archives);
+        foreach (var location in locations)
         {
+            ApiConnection.Token.ThrowIfCancellationRequested();
             var archiveId = ResolveArchiveId(config, location, archives);
             var archive = archiveId == Guid.Empty
                 ? archives.FirstOrDefault(x => string.Equals(x.Name, location.Name, StringComparison.OrdinalIgnoreCase))
@@ -198,10 +256,11 @@ internal sealed class SaveSyncManager
                 "unnamed-tracking-" + Guid.NewGuid().ToString("N") + ".zip");
             try
             {
-                await DownloadToFile(apiUrl.TrimEnd('/') + version.Url, apiKey, zip).ConfigureAwait(false);
-                BackupExisting(new[] { location }, game.Id);
-                ExtractZip(zip, new[] { location });
+                await DownloadToFile(ApiConnection.DownloadUrl(apiUrl, version.Url, remoteGameId, archiveId, version.Id), apiKey, zip).ConfigureAwait(false);
+                var backup = SaveArchive.Restore(zip, location, Path.Combine(backupDirectory, gameId.ToString("N")), ApiConnection.Token);
+                logger.Info("Save originals and recovery manifest retained in " + backup);
                 config.LocationFingerprints[location.Path] = FingerprintLocation(location);
+                store.Commit(gameId, config);
                 logger.Info($"Downloaded latest cloud save for '{location.Name}'.");
             }
             finally
@@ -210,21 +269,12 @@ internal sealed class SaveSyncManager
             }
         }
 
-        store.Save();
-    });
+        store.Commit(gameId, config);
+    }, token);
 
     private static List<string> CollectFiles(IEnumerable<string> roots)
-    {
-        var result = new List<string>();
-        foreach (var root in roots.Select(Environment.ExpandEnvironmentVariables))
-        {
-            if (File.Exists(root))
-                result.Add(root);
-            else if (Directory.Exists(root))
-                result.AddRange(Directory.GetFiles(root, "*", SearchOption.AllDirectories));
-        }
-        return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-    }
+        => roots.SelectMany(root => SaveArchive.CollectFiles(Environment.ExpandEnvironmentVariables(root)))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     private static void CreateZip(SavePathEntry item, string zip)
     {
@@ -233,6 +283,7 @@ internal sealed class SaveSyncManager
             var root = Environment.ExpandEnvironmentVariables(item.Path);
             foreach (var file in CollectFiles(new[] { root }))
             {
+                ApiConnection.Token.ThrowIfCancellationRequested();
                 var relative = Directory.Exists(root)
                     ? file.Substring(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length)
                         .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
@@ -248,59 +299,6 @@ internal sealed class SaveSyncManager
         }
     }
 
-    private static void ExtractZip(string zip, IEnumerable<SavePathEntry> configured)
-    {
-        var targets = configured.ToDictionary(
-            x => string.IsNullOrWhiteSpace(x.Name) ? "Save location" : x.Name,
-            x => Environment.ExpandEnvironmentVariables(x.Path),
-            StringComparer.OrdinalIgnoreCase);
-
-        using (var archive = ZipFile.OpenRead(zip))
-        {
-            foreach (var entry in archive.Entries)
-            {
-                var parts = entry.FullName.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length < 2 || !targets.TryGetValue(parts[0], out var target))
-                    throw new InvalidDataException("Save archive contains an unknown save location.");
-
-                var relative = string.Join(Path.DirectorySeparatorChar.ToString(), parts.Skip(1));
-                var destination = Path.GetFullPath(Path.Combine(target, relative));
-                var root = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                if (!destination.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("Unsafe save archive path.");
-
-                if (string.IsNullOrEmpty(entry.Name))
-                    Directory.CreateDirectory(destination);
-                else
-                {
-                    var parent = Path.GetDirectoryName(destination);
-                    if (!string.IsNullOrWhiteSpace(parent)) Directory.CreateDirectory(parent);
-                    entry.ExtractToFile(destination, true);
-                }
-            }
-        }
-    }
-
-    private static void BackupExisting(IEnumerable<SavePathEntry> configured, Guid gameId)
-    {
-        var files = CollectFiles(configured.Select(x => x.Path));
-        if (files.Count == 0) return;
-
-        var backupRoot = Path.Combine(Path.GetTempPath(), "UnnamedTrackingSaveBackups", gameId.ToString("N"), DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"));
-        foreach (var file in files)
-        {
-            var sourceRoot = configured.FirstOrDefault(x => CollectFiles(new[] { x.Path }).Contains(file, StringComparer.OrdinalIgnoreCase));
-            var locationName = sourceRoot == null ? "Save location" : (string.IsNullOrWhiteSpace(sourceRoot.Name) ? "Save location" : sourceRoot.Name);
-            foreach (var invalid in Path.GetInvalidFileNameChars()) locationName = locationName.Replace(invalid, '_');
-            var root = Environment.ExpandEnvironmentVariables(sourceRoot?.Path ?? Path.GetDirectoryName(file) ?? backupRoot);
-            var relative = Directory.Exists(root) ? file.Substring(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) : Path.GetFileName(file);
-            var destination = Path.Combine(backupRoot, locationName, relative);
-            var parent = Path.GetDirectoryName(destination);
-            if (!string.IsNullOrWhiteSpace(parent)) Directory.CreateDirectory(parent);
-            File.Copy(file, destination, true);
-        }
-    }
-
     private static string FingerprintLocation(SavePathEntry item)
     {
         using (var sha = SHA256.Create())
@@ -309,16 +307,17 @@ internal sealed class SaveSyncManager
             foreach (var file in CollectFiles(new[] { item.Path }).OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
             {
                 var info = new FileInfo(file);
-                lines.Add(item.Name + "|" + file + "|" + info.Length + "|" + info.LastWriteTimeUtc.Ticks);
+                ApiConnection.Token.ThrowIfCancellationRequested();
+                using var content = File.OpenRead(file);
+                lines.Add(item.Name + "|" + file + "|" + info.Length + "|" + Convert.ToBase64String(sha.ComputeHash(content)));
             }
             return Convert.ToBase64String(
                 sha.ComputeHash(Encoding.UTF8.GetBytes(string.Join("\n", lines))));
         }
     }
 
-    internal SaveSyncStatus GetStatus(Game game)
+    internal SaveSyncStatus GetStatus(SaveGameConfiguration config)
     {
-        var config = store.For(game.Id);
         var files = CollectFiles(config.SavePaths.Select(x => x.Path));
         if (config.SavePaths.Count == 0)
             return new SaveSyncStatus("Not configured", 0, config.UploadOnGameStop, config.DownloadOnGameStart);
@@ -332,12 +331,28 @@ internal sealed class SaveSyncManager
 
     private static async Task<Guid> ResolveGameId(string apiUrl, string apiKey, Guid playniteGuid)
     {
-        var response = await SendText(
-            apiUrl.TrimEnd('/') + "/api/game/list?skip=0&limit=200",
-            apiKey,
-            "GET").ConfigureAwait(false);
-        var games = Deserialize<List<SaveRemoteGame>>(response) ?? new List<SaveRemoteGame>();
-        return games.FirstOrDefault(x => x.PlayniteGuid == playniteGuid)?.Id ?? Guid.Empty;
+        var matches = new List<SaveRemoteGame>();
+        var seen = new HashSet<Guid>();
+        for (var skip = 0; ; skip += 200)
+        {
+            ApiConnection.Token.ThrowIfCancellationRequested();
+            var response = await SendText(apiUrl.TrimEnd('/') + $"/api/game/list?skip={skip}&limit=200", apiKey, "GET").ConfigureAwait(false);
+            var games = Deserialize<List<SaveRemoteGame>>(response);
+            if (games == null || games.Any(game => game == null || game.Id == Guid.Empty || !seen.Add(game.Id)))
+                throw new InvalidDataException("The server returned an invalid or repeated game list.");
+            matches.AddRange(games.Where(game => game.PlayniteGuid == playniteGuid));
+            if (games.Count < 200) break;
+        }
+        if (matches.Count > 1) throw new InvalidDataException("More than one remote game has this Playnite GUID.");
+        return matches.SingleOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private static void ValidateArchives(List<SaveRemoteArchive> archives)
+    {
+        if (archives.Any(archive => archive == null || archive.Id == Guid.Empty || string.IsNullOrWhiteSpace(archive.Name) ||
+            archive.Versions == null || archive.Versions.Any(version => version == null || version.Id == Guid.Empty || string.IsNullOrWhiteSpace(version.Url))) ||
+            archives.Select(archive => archive.Id).Distinct().Count() != archives.Count)
+            throw new InvalidDataException("The server returned an invalid save archive list.");
     }
 
     private static Guid ResolveArchiveId(
@@ -346,11 +361,14 @@ internal sealed class SaveSyncManager
         IEnumerable<SaveRemoteArchive> archives)
     {
         if (config.RemoteArchiveIds.TryGetValue(location.Path, out var storedId))
-            return storedId;
+        {
+            if (archives.Any(archive => archive.Id == storedId)) return storedId;
+            config.RemoteArchiveIds.Remove(location.Path);
+        }
 
-        var byName = archives.FirstOrDefault(
-            x => string.Equals(x.Name, location.Name, StringComparison.OrdinalIgnoreCase));
-        return byName?.Id ?? Guid.Empty;
+        var matches = archives.Where(x => string.Equals(x.Name, location.Name, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (matches.Count > 1) throw new InvalidDataException("Multiple remote save archives share this location name.");
+        return matches.SingleOrDefault()?.Id ?? Guid.Empty;
     }
 
     private static async Task<Guid> CreateArchive(
@@ -368,8 +386,9 @@ internal sealed class SaveSyncManager
             "Content-Type: application/zip\r\n\r\n");
         var tail = Encoding.UTF8.GetBytes($"\r\n--{boundary}--\r\n");
 
-        var request = (HttpWebRequest)WebRequest.Create(
+        var request = ApiConnection.CreateRequest(
             apiUrl.TrimEnd('/') + $"/api/game/{gameId}/archives/save");
+        using var registration = ApiConnection.RegisterRequest(request);
         request.Method = "POST";
         request.Headers[HttpRequestHeader.Authorization] = "Bearer " + key;
         request.ContentType = "multipart/form-data; boundary=" + boundary;
@@ -382,13 +401,13 @@ internal sealed class SaveSyncManager
             {
                 var buffer = new byte[1024 * 1024];
                 int read;
-                while ((read = await input.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0)
+                while ((read = await input.ReadAsync(buffer, 0, buffer.Length, ApiConnection.Token).ConfigureAwait(false)) > 0)
                     await requestStream.WriteAsync(buffer, 0, read).ConfigureAwait(false);
             }
             await requestStream.WriteAsync(tail, 0, tail.Length).ConfigureAwait(false);
         }
 
-        using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+        using (var response = ApiConnection.EnsureSuccess((HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false)))
         using (var stream = response.GetResponseStream() ?? Stream.Null)
         using (var memory = new MemoryStream())
         {
@@ -405,11 +424,16 @@ internal sealed class SaveSyncManager
         Guid archiveId,
         string name)
     {
-        var escapedName = name.Replace("\\", "\\\\").Replace("\"", "\\\"");
-        var body = Encoding.UTF8.GetBytes("{\"name\":\"" + escapedName + "\"}");
+        byte[] body;
+        using (var memory = new MemoryStream())
+        {
+            new DataContractJsonSerializer(typeof(SaveArchiveName)).WriteObject(memory, new SaveArchiveName { Name = name });
+            body = memory.ToArray();
+        }
 
-        var request = (HttpWebRequest)WebRequest.Create(
+        var request = ApiConnection.CreateRequest(
             apiUrl.TrimEnd('/') + $"/api/game/{gameId}/archives/{archiveId}");
+        using var registration = ApiConnection.RegisterRequest(request);
         request.Method = "PATCH";
         request.Headers[HttpRequestHeader.Authorization] = "Bearer " + key;
         request.ContentType = "application/json";
@@ -418,7 +442,7 @@ internal sealed class SaveSyncManager
         using (var requestStream = await request.GetRequestStreamAsync().ConfigureAwait(false))
             await requestStream.WriteAsync(body, 0, body.Length).ConfigureAwait(false);
 
-        using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+        using (var response = ApiConnection.EnsureSuccess((HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false)))
         using (var stream = response.GetResponseStream() ?? Stream.Null)
             await stream.CopyToAsync(Stream.Null).ConfigureAwait(false);
     }
@@ -437,8 +461,9 @@ internal sealed class SaveSyncManager
             "Content-Type: application/zip\r\n\r\n");
         var tail = Encoding.UTF8.GetBytes($"\r\n--{boundary}--\r\n");
 
-        var request = (HttpWebRequest)WebRequest.Create(
+        var request = ApiConnection.CreateRequest(
             apiUrl.TrimEnd('/') + $"/api/game/{gameId}/archives/{archiveId}/versions");
+        using var registration = ApiConnection.RegisterRequest(request);
         request.Method = "POST";
         request.Headers[HttpRequestHeader.Authorization] = "Bearer " + key;
         request.ContentType = "multipart/form-data; boundary=" + boundary;
@@ -451,13 +476,13 @@ internal sealed class SaveSyncManager
             {
                 var buffer = new byte[1024 * 1024];
                 int read;
-                while ((read = await input.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0)
+                while ((read = await input.ReadAsync(buffer, 0, buffer.Length, ApiConnection.Token).ConfigureAwait(false)) > 0)
                     await requestStream.WriteAsync(buffer, 0, read).ConfigureAwait(false);
             }
             await requestStream.WriteAsync(tail, 0, tail.Length).ConfigureAwait(false);
         }
 
-        using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+        using (var response = ApiConnection.EnsureSuccess((HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false)))
         using (var stream = response.GetResponseStream() ?? Stream.Null)
         {
             await stream.CopyToAsync(Stream.Null).ConfigureAwait(false);
@@ -466,14 +491,15 @@ internal sealed class SaveSyncManager
 
     private static async Task DownloadToFile(string url, string key, string destination)
     {
-        var request = (HttpWebRequest)WebRequest.Create(url);
+        var request = ApiConnection.CreateRequest(url);
+        using var registration = ApiConnection.RegisterRequest(request);
         request.Method = "GET";
         request.Headers[HttpRequestHeader.Authorization] = "Bearer " + key;
-        using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+        using (var response = ApiConnection.EnsureSuccess((HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false)))
         using (var stream = response.GetResponseStream() ?? Stream.Null)
         using (var output = File.Create(destination))
         {
-            await stream.CopyToAsync(output).ConfigureAwait(false);
+            await stream.CopyToAsync(output, 81920, ApiConnection.Token).ConfigureAwait(false);
         }
     }
 
@@ -485,7 +511,8 @@ internal sealed class SaveSyncManager
 
     private static async Task<byte[]> SendBytes(string url, string key, string method, byte[] body, string contentType)
     {
-        var request = (HttpWebRequest)WebRequest.Create(url);
+        var request = ApiConnection.CreateRequest(url);
+        using var registration = ApiConnection.RegisterRequest(request);
         request.Method = method;
         request.Headers[HttpRequestHeader.Authorization] = "Bearer " + key;
         request.ContentLength = body.Length;
@@ -496,7 +523,7 @@ internal sealed class SaveSyncManager
                 await stream.WriteAsync(body, 0, body.Length).ConfigureAwait(false);
         }
 
-        using (var response = (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
+        using (var response = ApiConnection.EnsureSuccess((HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false)))
         using (var stream = response.GetResponseStream() ?? Stream.Null)
         using (var memory = new MemoryStream())
         {
@@ -507,6 +534,9 @@ internal sealed class SaveSyncManager
 
     private static T Deserialize<T>(string json)
     {
+        if (string.IsNullOrWhiteSpace(json)) throw new InvalidDataException("The server returned an empty JSON response.");
+        if (typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(List<>) && !json.TrimStart().StartsWith("[", StringComparison.Ordinal))
+            throw new InvalidDataException("The server returned an object where a JSON array was required.");
         var serializer = new DataContractJsonSerializer(typeof(T));
         using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(json)))
             return (T)serializer.ReadObject(stream)!;

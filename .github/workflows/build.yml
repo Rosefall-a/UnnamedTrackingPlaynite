@@ -25,6 +25,15 @@ jobs:
       - name: Build
         run: dotnet build UnnamedTrackingPlaynite.sln --configuration Release --no-restore
 
+      - name: Build synchronization regression harness
+        run: dotnet build tests/Companion.Tests -c Release -f net462
+
+      - name: Test production synchronization and saves on .NET Framework
+        shell: pwsh
+        run: |
+          & ./tests/Companion.Tests/bin/Release/net462/Companion.Tests.exe
+          if ($LASTEXITCODE -ne 0) { throw "Synchronization regression harness failed." }
+
       - name: Validate extension output
         shell: pwsh
         run: ./tests/validate-extension.ps1 -ExtensionDirectory "src/UnnamedTrackingPlaynite/bin/Release/net462"
@@ -34,3 +43,13 @@ jobs:
         with:
           name: unnamed-tracking-playnite
           path: src/UnnamedTrackingPlaynite/bin/Release/net462/
+
+  wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r wiki/requirements.txt
+      - run: python -m mkdocs build --strict -f wiki/mkdocs.yml

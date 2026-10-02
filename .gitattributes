@@ -1,0 +1,13 @@
+# Keep the repository's existing LF source convention on every checkout.
+* text=auto eol=lf
+
+# Packages, assemblies, debug symbols and screenshots must remain byte-exact.
+*.pext binary
+*.zip binary
+*.dll binary
+*.pdb binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary

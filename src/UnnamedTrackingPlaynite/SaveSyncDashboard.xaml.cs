@@ -13,6 +13,8 @@ public partial class SaveSyncDashboard : UserControl
 {
     private sealed class Row
     {
+        public Guid Id { get; set; }
+        public SaveGameConfiguration Configuration { get; set; } = null!;
         public Game Game { get; set; } = null!;
         public string GameName { get; set; } = "";
         public string Status { get; set; } = "";
@@ -29,44 +31,70 @@ public partial class SaveSyncDashboard : UserControl
     private readonly List<Expander> expanders = new List<Expander>();
     private List<Row> rows = new List<Row>();
     private Row? selectedRow;
+    private readonly Action openApplication;
+    private readonly Action cancel;
+    private int refreshVersion;
 
-    internal SaveSyncDashboard(IPlayniteAPI api, SaveSyncManager manager, Action<Game> configure, Func<Game, bool, Task> sync)
+    internal SaveSyncDashboard(IPlayniteAPI api, SaveSyncManager manager, Action<Game> configure, Func<Game, bool, Task> sync, Action openApplication, Action cancel)
     {
         InitializeComponent();
         this.api = api;
         this.manager = manager;
         this.configure = configure;
         this.sync = sync;
+        this.openApplication = openApplication;
+        this.cancel = cancel;
         RefreshRows();
     }
 
-    private void RefreshRows()
+    private async void RefreshRows()
     {
-        rows = api.Database.Games.OrderBy(x => x.Name).Select(game =>
+        var version = ++refreshVersion;
+        // SDK reads happen before Task.Run; hashing and filesystem scans use copies.
+        var captured = api.Database.Games.OrderBy(game => game.Name).Select(game => new Row
         {
-            var config = manager.Configuration(game.Id);
-            var status = manager.GetStatus(game);
-            return new Row
-            {
-                Game = game,
-                GameName = game.Name ?? "<unnamed>",
-                Status = status.Status,
-                FileCount = status.FileCount,
-                Upload = status.UploadOnGameStop ? "Enabled" : "Disabled",
-                Download = status.DownloadOnGameStart ? "Enabled" : "Disabled",
-                Locations = config.SavePaths.Count == 0
-                    ? "None configured"
-                    : string.Join(" | ", config.SavePaths.Select(x =>
-                        (string.IsNullOrWhiteSpace(x.Name) ? "Save location" : x.Name) + ": " + x.Path))
-            };
+            Id = game.Id,
+            Game = game,
+            GameName = game.Name ?? "<unnamed>",
+            Configuration = manager.Configuration(game.Id)
         }).ToList();
-
-        SummaryText.Text = rows.Count + " game(s) in library • " +
-                           rows.Count(x => x.Status != "Not configured") + " configured";
+        SummaryText.Text = "Checking local save files...";
+        await Task.Run(() =>
+        {
+            foreach (var row in captured)
+            {
+                var config = row.Configuration;
+                try
+                {
+                    var status = manager.GetStatus(config);
+                    row.Status = status.Status; row.FileCount = status.FileCount;
+                }
+                catch (Exception ex) { row.Status = "Local save error: " + ex.Message; }
+                row.Upload = config.UploadOnGameStop ? "Enabled" : "Disabled";
+                row.Download = config.DownloadOnGameStart ? "Enabled" : "Disabled";
+                row.Locations = config.SavePaths.Count == 0 ? "None configured" :
+                    string.Join(" | ", config.SavePaths.Select(path => path.Name + ": " + path.Path));
+            }
+        });
+        if (version != refreshVersion) return;
+        rows = captured;
+        SummaryText.Text = rows.Count + " game(s) in library • " + rows.Count(row => row.Status != "Not configured") + " configured";
         selectedRow = null;
         UpdateActionButtons();
         RebuildGroups();
     }
+
+    private async Task RunSyncAsync(Game game, bool upload)
+    {
+        GroupsPanel.IsEnabled = false;
+        UploadButton.IsEnabled = DownloadButton.IsEnabled = ConfigureButton.IsEnabled = false;
+        SummaryText.Text = upload ? "Uploading saves..." : "Checking cloud saves...";
+        try { await sync(game, upload); }
+        finally { GroupsPanel.IsEnabled = true; RefreshRows(); }
+    }
+
+    private void OpenApplication_Click(object sender, RoutedEventArgs e) => openApplication();
+    private void CancelSync_Click(object sender, RoutedEventArgs e) => cancel();
 
     private IEnumerable<Row> SortedRows(IEnumerable<Row> source)
     {
@@ -134,8 +162,7 @@ public partial class SaveSyncDashboard : UserControl
             {
                 if (list.SelectedItem is Row row)
                 {
-                    await sync(row.Game, true);
-                    RefreshRows();
+                    await RunSyncAsync(row.Game, true);
                 }
             };
 
@@ -150,13 +177,11 @@ public partial class SaveSyncDashboard : UserControl
         menu.Items.Clear();
         menu.Items.Add(CreateMenuItem("Sync / upload now", async () =>
         {
-            await sync(row.Game, true);
-            RefreshRows();
+            await RunSyncAsync(row.Game, true);
         }));
         menu.Items.Add(CreateMenuItem("Download latest", async () =>
         {
-            await sync(row.Game, false);
-            RefreshRows();
+            await RunSyncAsync(row.Game, false);
         }));
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateMenuItem("Change save locations & configuration", () =>
@@ -191,15 +216,13 @@ public partial class SaveSyncDashboard : UserControl
     private async void SyncUpload_Click(object sender, RoutedEventArgs e)
     {
         if (selectedRow == null) return;
-        await sync(selectedRow.Game, true);
-        RefreshRows();
+        await RunSyncAsync(selectedRow.Game, true);
     }
 
     private async void SyncDownload_Click(object sender, RoutedEventArgs e)
     {
         if (selectedRow == null) return;
-        await sync(selectedRow.Game, false);
-        RefreshRows();
+        await RunSyncAsync(selectedRow.Game, false);
     }
 
     private void Configure_Click(object sender, RoutedEventArgs e)

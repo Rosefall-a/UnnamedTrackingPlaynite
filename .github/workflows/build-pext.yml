@@ -8,6 +8,8 @@ on:
     branches:
       - main
       - 'v*'
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -32,59 +34,24 @@ jobs:
       - name: Build
         run: dotnet build src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj --configuration Release --no-restore
 
-      - name: Package PEXT
+      - name: Package and validate PEXT
         shell: pwsh
-        run: |
-          $projectDir = Join-Path $env:GITHUB_WORKSPACE 'src/UnnamedTrackingPlaynite'
-          $outputDir = Join-Path $projectDir 'bin/Release/net462'
-          $packageDir = Join-Path $env:RUNNER_TEMP 'pext'
+        run: ./pack.ps1 -NoBuild
 
-          if (-not (Test-Path $outputDir)) {
-            throw "Build output directory was not found: $outputDir"
-          }
-
-          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-          Copy-Item (Join-Path $outputDir 'UnnamedTrackingPlaynite.dll') $packageDir
-          Copy-Item (Join-Path $projectDir 'extension.yaml') $packageDir
-
-          $versionLine = Get-Content (Join-Path $projectDir 'extension.yaml') |
-            Where-Object { $_ -match '^Version:\s*(.+)$' } |
-            Select-Object -First 1
-          if (-not $versionLine) {
-            throw 'Could not determine extension version from extension.yaml.'
-          }
-
-          $version = ($versionLine -replace '^Version:\s*', '').Trim()
-          $packagePath = Join-Path $env:GITHUB_WORKSPACE "UnnamedTrackingPlaynite-$version.pext"
-
-          Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $packagePath -Force
-          Write-Host "Created $packagePath"
-
-      - name: Validate PEXT contents
+      - name: Test package validation
         shell: pwsh
-        run: |
-          $package = Get-ChildItem "UnnamedTrackingPlaynite-*.pext" | Select-Object -First 1
-          if (-not $package) {
-            throw "PEXT package was not created."
-          }
-
-          $extractDir = Join-Path $env:RUNNER_TEMP "pext-validate"
-          if (Test-Path $extractDir) {
-            Remove-Item $extractDir -Recurse -Force
-          }
-          Expand-Archive -Path $package.FullName -DestinationPath $extractDir -Force
-          ./tests/validate-extension.ps1 -ExtensionDirectory $extractDir
+        run: ./tests/test-packaging.ps1
 
       - name: Upload PEXT artifact
         uses: actions/upload-artifact@v4
         with:
           name: UnnamedTrackingPlaynite-PEXT
-          path: UnnamedTrackingPlaynite-*.pext
+          path: artifacts/UnnamedTrackingPlaynite-*.pext
           if-no-files-found: error
           retention-days: 30
 
       - name: Determine release tag
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           $versionLine = Get-Content 'src/UnnamedTrackingPlaynite/extension.yaml' |
@@ -95,20 +62,17 @@ jobs:
           }
 
           $version = ($versionLine -replace '^Version:\s*', '').Trim()
-          $tag = if ($env:GITHUB_REF -like 'refs/tags/*') {
-            $env:GITHUB_REF_NAME
-          } else {
-            "v$version"
-          }
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -cne "v$version") { throw "Release tag must match the extension version v$version." }
 
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Publish GitHub release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
           prerelease: false
           generate_release_notes: true
-          files: UnnamedTrackingPlaynite-*.pext
+          files: artifacts/UnnamedTrackingPlaynite-*.pext

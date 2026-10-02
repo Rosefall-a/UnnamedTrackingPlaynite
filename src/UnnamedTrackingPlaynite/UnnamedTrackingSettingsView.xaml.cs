@@ -13,6 +13,16 @@ public partial class UnnamedTrackingSettingsView : UserControl
         InitializeComponent();
     }
 
+    private void ApiKeyBox_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is UnnamedTrackingSettings settings) ApiKeyBox.Password = settings.AuthValue;
+    }
+
+    private void ApiKeyBox_PasswordChanged(object sender, RoutedEventArgs e)
+    {
+        if (ApiKeyBox.IsLoaded && DataContext is UnnamedTrackingSettings settings) settings.AuthValue = ApiKeyBox.Password;
+    }
+
     private async void TestButton_Click(object sender, RoutedEventArgs e)
     {
         if (!(DataContext is UnnamedTrackingSettings settings))
@@ -58,7 +68,7 @@ public partial class UnnamedTrackingSettingsView : UserControl
         }
         catch (OperationCanceledException)
         {
-            UploadStatus.Text = "Library sync cancelled."; 
+            UploadStatus.Text = "Library sync cancelled.";
         }
         catch (Exception ex)
         {
@@ -83,6 +93,7 @@ public partial class UnnamedTrackingSettingsView : UserControl
         UploadButton.IsEnabled = false;
         PreviewButton.IsEnabled = false;
         UploadStatus.Text = "Building synchronization preview...";
+        CancelButton.IsEnabled = true;
         try
         {
             var result = await settings.PreviewLibraryAsync();
@@ -97,6 +108,7 @@ public partial class UnnamedTrackingSettingsView : UserControl
             if (result.IgnoredGames.Count > 0) builder.AppendLine("Ignored games: " + string.Join(", ", result.IgnoredGames));
             UploadStatus.Text = builder.ToString();
         }
+        catch (OperationCanceledException) { UploadStatus.Text = "Preview cancelled."; }
         catch (Exception ex)
         {
             UploadStatus.Text = $"Preview failed: {ex.Message}";
@@ -105,6 +117,7 @@ public partial class UnnamedTrackingSettingsView : UserControl
         {
             UploadButton.IsEnabled = true;
             PreviewButton.IsEnabled = true;
+            CancelButton.IsEnabled = false;
         }
     }
 
@@ -125,6 +138,8 @@ public partial class UnnamedTrackingSettingsView : UserControl
         builder.AppendLine($"Total: {result.TotalGames}");
         builder.AppendLine($"Succeeded: {result.SucceededGames}");
         builder.AppendLine($"Failed: {result.FailedGames}");
+        builder.AppendLine($"Artwork warnings: {result.WarningCount}");
+        foreach (var warning in result.Warnings) builder.AppendLine($"  {warning.GameName}: {warning.Operation} — {warning.ResponseBody}");
 
         if (result.FailedGames == 0)
         {

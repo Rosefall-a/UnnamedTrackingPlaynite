@@ -12,6 +12,8 @@ public sealed class SavePathEntry
 {
     [DataMember(Name = "name")]
     public string Name { get; set; } = "";
+    [DataMember(Name = "is_file")]
+    public bool IsFile { get; set; }
     [DataMember(Name = "path")]
     public string Path { get; set; } = "";
 }
@@ -43,6 +45,7 @@ internal sealed class SaveSyncConfiguration
 internal sealed class SaveSyncStore
 {
     private readonly string path;
+    private readonly object syncRoot = new object();
     private readonly ILogger logger;
     public SaveSyncConfiguration Data { get; private set; }
 
@@ -54,7 +57,7 @@ internal sealed class SaveSyncStore
         Data = Load();
     }
 
-    public SaveGameConfiguration For(Guid gameId)
+    private SaveGameConfiguration For(Guid gameId)
     {
         if (Data.Games == null)
             Data.Games = new Dictionary<Guid, SaveGameConfiguration>();
@@ -69,23 +72,53 @@ internal sealed class SaveSyncStore
         // a member is absent/null in an older save-sync.json. Normalize those
         // collections before any dashboard or sync code touches them.
         config.SavePaths ??= new List<SavePathEntry>();
-        config.RemoteArchiveIds ??= new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
-        config.LocationFingerprints ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        config.SavePaths.RemoveAll(entry => entry == null);
+        config.RemoteArchiveIds = new Dictionary<string, Guid>(config.RemoteArchiveIds ?? new Dictionary<string, Guid>(), StringComparer.OrdinalIgnoreCase);
+        config.LocationFingerprints = new Dictionary<string, string>(config.LocationFingerprints ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
         return config;
     }
 
-    public void Save()
+    public SaveGameConfiguration Snapshot(Guid gameId)
     {
+        lock (syncRoot)
+        {
+            var config = For(gameId);
+            return new SaveGameConfiguration
+            {
+                SavePaths = config.SavePaths.ConvertAll(entry => new SavePathEntry { Name = entry.Name, Path = entry.Path, IsFile = entry.IsFile }),
+                UploadOnGameStop = config.UploadOnGameStop,
+                DownloadOnGameStart = config.DownloadOnGameStart,
+                RemoteArchiveIds = new Dictionary<string, Guid>(config.RemoteArchiveIds, StringComparer.OrdinalIgnoreCase),
+                LocationFingerprints = new Dictionary<string, string>(config.LocationFingerprints, StringComparer.OrdinalIgnoreCase)
+            };
+        }
+    }
+
+    public void Commit(Guid gameId, SaveGameConfiguration config)
+    {
+        lock (syncRoot) { Data.Games[gameId] = config; Save(); }
+    }
+
+    private void Save()
+    {
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             var serializer = new DataContractJsonSerializer(typeof(SaveSyncConfiguration));
-            using (var stream = File.Create(path))
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
                 serializer.WriteObject(stream, Data);
+                stream.Flush(true);
+            }
+            if (File.Exists(path)) File.Replace(temporary, path, path + ".bak");
+            else File.Move(temporary, path);
         }
         catch (Exception ex)
         {
-            logger.Error($"Could not save local save-sync configuration: {ex}");
+            logger.Error($"Could not save local save-sync configuration: {ex.Message}");
+            throw new IOException("Could not persist save-sync configuration. Check the extension data directory.", ex);
         }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
     private SaveSyncConfiguration Load()
@@ -96,12 +129,13 @@ internal sealed class SaveSyncStore
             {
                 var serializer = new DataContractJsonSerializer(typeof(SaveSyncConfiguration));
                 using (var stream = File.OpenRead(path))
-                    return (SaveSyncConfiguration)serializer.ReadObject(stream);
+                    return (SaveSyncConfiguration?)serializer.ReadObject(stream) ?? new SaveSyncConfiguration();
             }
         }
         catch (Exception ex)
         {
-            logger.Error($"Could not load local save-sync configuration; using defaults: {ex}");
+            logger.Error($"Could not load local save-sync configuration; preserving the corrupt file: {ex.Message}");
+            File.Copy(path, path + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N"), false);
         }
         return new SaveSyncConfiguration();
     }
