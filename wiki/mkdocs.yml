@@ -1,0 +1,43 @@
+site_name: Unnamed Tracking for Playnite
+site_description: User and developer manual for the Unnamed Tracking companion extension
+repo_url: https://github.com/Rosefall-a/UnnamedTrackingPlaynite
+edit_uri: edit/main/wiki/docs/
+strict: true
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+markdown_extensions:
+  - admonition
+  - tables
+  - fenced_code
+nav:
+  - Home: index.md
+  - User Guide:
+      - Installation and configuration: user-guide/installation.md
+      - Library synchronization: user-guide/synchronization.md
+      - Save synchronization and recovery: user-guide/saves.md
+      - Embedded view: user-guide/embedded-view.md
+      - Troubleshooting: user-guide/troubleshooting.md
+      - Screenshot availability: user-guide/screenshots.md
+  - Developer Guide:
+      - Architecture and SDK boundary: developer-guide/architecture.md
+      - Synchronization and API contract: developer-guide/api-contract.md
+      - Threading and cancellation: developer-guide/threading.md
+      - Save implementation: developer-guide/save-sync.md
+      - Build, packaging and CI: developer-guide/build.md
+      - Release process: developer-guide/releases.md
+      - Repository audit: developer-guide/audit.md
