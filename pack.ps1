@@ -1,40 +1,51 @@
 param(
     [string]$Configuration = "Release",
-    [string]$ToolboxPath = ""
+    [string]$ToolboxPath = "",
+    [switch]$NoBuild
 )
 
 $ErrorActionPreference = "Stop"
-
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = $PSScriptRoot
 $project = Join-Path $root "src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj"
 $output = Join-Path $root "src/UnnamedTrackingPlaynite/bin/$Configuration/net462"
-$packageDir = Join-Path $root "artifacts"
+$artifacts = Join-Path $root "artifacts"
 
-if (-not (Test-Path $project)) {
-    throw "Plugin project not found: $project"
+if (-not $NoBuild) {
+    dotnet build $project -c $Configuration
+    if ($LASTEXITCODE -ne 0) { throw "Extension build failed with exit code $LASTEXITCODE." }
 }
 
-dotnet build $project -c $Configuration
+& (Join-Path $root "tests/validate-extension.ps1") -ExtensionDirectory $output
+$manifest = Get-Content (Join-Path $output "extension.yaml") -Raw
+$version = [regex]::Match($manifest, '(?m)^Version:\s*(.+)$').Groups[1].Value.Trim()
+New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
+$packagePath = Join-Path $artifacts "UnnamedTrackingPlaynite-$version.pext"
+$staging = Join-Path ([System.IO.Path]::GetTempPath()) ("unnamed-pext-" + [guid]::NewGuid().ToString('N'))
 
-if (-not $ToolboxPath) {
-    $candidates = @(
-        "$env:ProgramFiles\Playnite\Toolbox.exe",
-        "$env:LOCALAPPDATA\Playnite\Toolbox.exe"
-    )
-    $ToolboxPath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+try {
+    New-Item -ItemType Directory -Path $staging | Out-Null
+    Copy-Item (Join-Path $output "UnnamedTrackingPlaynite.dll") $staging
+    Copy-Item (Join-Path $output "extension.yaml") $staging
+    if ($ToolboxPath) {
+        if (-not (Test-Path $ToolboxPath -PathType Leaf)) { throw "Playnite Toolbox not found: $ToolboxPath" }
+        $toolboxOutput = Join-Path $staging "toolbox-output"
+        New-Item -ItemType Directory -Path $toolboxOutput | Out-Null
+        & $ToolboxPath pack $output $toolboxOutput
+        if ($LASTEXITCODE -ne 0) { throw "Playnite Toolbox failed with exit code $LASTEXITCODE." }
+        $packages = @(Get-ChildItem $toolboxOutput -Filter '*.pext')
+        if ($packages.Count -ne 1) { throw "Playnite Toolbox must produce exactly one PEXT." }
+        Copy-Item $packages[0].FullName $packagePath -Force
+    } else {
+        # .pext is ZIP, but Compress-Archive only accepts .zip consistently.
+        $zip = Join-Path $staging "package.zip"
+        Compress-Archive -LiteralPath @(
+            (Join-Path $staging "UnnamedTrackingPlaynite.dll"),
+            (Join-Path $staging "extension.yaml")
+        ) -DestinationPath $zip
+        Move-Item $zip $packagePath -Force
+    }
+    & (Join-Path $root "tests/validate-package.ps1") -PackagePath $packagePath
+    Write-Host "Created $packagePath"
+} finally {
+    Remove-Item $staging -Recurse -Force
 }
-
-if (-not $ToolboxPath -or -not (Test-Path $ToolboxPath)) {
-    Write-Warning "Playnite Toolbox.exe was not found. The plugin was built successfully, but no .pext package was created."
-    Write-Host "Build output: $output"
-    exit 0
-}
-
-New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-& $ToolboxPath pack $output $packageDir
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Playnite Toolbox failed with exit code $LASTEXITCODE."
-}
-
-Write-Host "Package created in $packageDir"
