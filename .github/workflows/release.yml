@@ -1,0 +1,73 @@
+name: Publish Playnite extension release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing GitHub release tag to package"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.tag }}"
+          } else {
+            $tag = "${{ github.event.release.tag_name }}"
+          }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Release tag must be exactly vMAJOR.MINOR.PATCH; got '$tag'."
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$($tag.Substring(1))" >> $env:GITHUB_OUTPUT
+
+      - name: Checkout tagged release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Restore
+        run: dotnet restore UnnamedTrackingPlaynite.sln
+
+      - name: Build and package exact release version
+        shell: pwsh
+        run: ./pack.ps1 -Version "${{ steps.release.outputs.version }}"
+
+      - name: Upload PEXT to GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $asset = "artifacts/UnnamedTrackingPlaynite-${{ steps.release.outputs.version }}.pext"
+          if (-not (Test-Path $asset -PathType Leaf)) {
+            throw "Expected release asset was not produced: $asset"
+          }
+          gh release upload "${{ steps.release.outputs.tag }}" $asset --repo "${{ github.repository }}" --clobber
+
+      - name: Verify release asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = gh release view "${{ steps.release.outputs.tag }}" --repo "${{ github.repository }}" --json assets | ConvertFrom-Json
+          $expected = "UnnamedTrackingPlaynite-${{ steps.release.outputs.version }}.pext"
+          if (-not ($assets.assets.name -contains $expected)) {
+            throw "Release does not contain expected asset '$expected'."
+          }
+          Write-Host "Release ${{ steps.release.outputs.tag }} contains $expected."

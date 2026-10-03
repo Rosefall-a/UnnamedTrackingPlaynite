@@ -43,8 +43,11 @@ if ($LASTEXITCODE -ne 0) { throw "Regression tests failed" }
 ./tests/test-packaging.ps1
 ```
 
-The PEXT is `artifacts/UnnamedTrackingPlaynite-0.1.2.pext` and contains exactly
-`UnnamedTrackingPlaynite.dll` and `extension.yaml` at its root. Toolbox is optional.
+The PEXT is written to `artifacts/UnnamedTrackingPlaynite-<version>.pext` and contains exactly
+`UnnamedTrackingPlaynite.dll` and `extension.yaml` at its root. Normal development builds
+use the project's last stable source version. For a release, the GitHub release tag is the
+only version you change (for example `v0.2.0`); CI passes `0.2.0` into MSBuild, stamps the
+manifest and assembly, validates the package, and attaches the matching PEXT to the release. Toolbox is optional.
 For portable helper tests use `dotnet run --project tests/Companion.Tests -c Release -f net8.0`.
 No test framework or new extension runtime dependency is required.
 
@@ -53,7 +56,7 @@ python -m pip install -r wiki/requirements.txt
 python -m mkdocs build --strict -f wiki/mkdocs.yml
 ```
 
-Both existing build workflows remain active, including package validation.
+The main build workflow remains active and now includes package validation.
 Main/PR builds produce artifacts; release publication requires an intentional tag
 matching the manifest/project version. See [release notes](CHANGELOG.md) and
 [release process](wiki/docs/developer-guide/releases.md). This change publishes no release.

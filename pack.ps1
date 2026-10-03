@@ -1,6 +1,7 @@
 param(
     [string]$Configuration = "Release",
     [string]$ToolboxPath = "",
+    [string]$Version = "",
     [switch]$NoBuild
 )
 
@@ -10,12 +11,30 @@ $project = Join-Path $root "src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.
 $output = Join-Path $root "src/UnnamedTrackingPlaynite/bin/$Configuration/net462"
 $artifacts = Join-Path $root "artifacts"
 
+if ($Version -and $Version -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Version must be major.minor.patch, got '$Version'."
+}
+
 if (-not $NoBuild) {
-    dotnet build $project -c $Configuration
+    if ($Version) {
+        dotnet build $project -c $Configuration -p:Version=$Version
+    } else {
+        dotnet build $project -c $Configuration
+    }
     if ($LASTEXITCODE -ne 0) { throw "Extension build failed with exit code $LASTEXITCODE." }
 }
 
-& (Join-Path $root "tests/validate-extension.ps1") -ExtensionDirectory $output
+$validationArgs = @{ ExtensionDirectory = $output }
+if ($Version) { $validationArgs.ExpectedVersion = $Version }
+& (Join-Path $root "tests/validate-extension.ps1") @validationArgs
+if ($Version) {
+    $manifest = Get-Content (Join-Path $output "extension.yaml") -Raw
+    $builtVersion = [regex]::Match($manifest, '(?m)^Version:\s*(.+)$').Groups[1].Value.Trim()
+    if ($builtVersion -ne $Version) {
+        throw "Built extension version '$builtVersion' does not match requested version '$Version'."
+    }
+}
+
 $manifest = Get-Content (Join-Path $output "extension.yaml") -Raw
 $version = [regex]::Match($manifest, '(?m)^Version:\s*(.+)$').Groups[1].Value.Trim()
 New-Item -ItemType Directory -Force -Path $artifacts | Out-Null

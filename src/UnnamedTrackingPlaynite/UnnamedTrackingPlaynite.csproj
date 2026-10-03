@@ -6,9 +6,8 @@
     <RootNamespace>UnnamedTrackingPlaynite</RootNamespace>
     <OutputType>Library</OutputType>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <AssemblyVersion>0.1.2.0</AssemblyVersion>
-    <FileVersion>0.1.2.0</FileVersion>
-    <Version>0.1.2</Version>
+    <!-- Release CI overrides Version from the GitHub release tag. -->
+    <Version Condition="'$(Version)' == ''">0.1.2</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,8 +15,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Reference Include="System.IO.Compression" />
-    <Reference Include="System.IO.Compression.FileSystem" />
     <None Include="extension.yaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <Target Name="StampExtensionManifest" AfterTargets="Build">
+    <WriteLinesToFile
+      File="$(TargetDir)extension.yaml"
+      Lines="Id: UnnamedTrackingPlaynite;Name: Unnamed Tracking;Author: Rosefall-a;Version: $(Version);Module: UnnamedTrackingPlaynite.dll;Type: GenericPlugin;Links:;    - Name: Source;      Url: https://github.com/Rosefall-a/UnnamedTrackingPlaynite"
+      Overwrite="true"
+      Encoding="UTF-8" />
+  </Target>
 </Project>
