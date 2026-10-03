@@ -28,6 +28,10 @@ jobs:
       - name: Build synchronization regression harness
         run: dotnet build tests/Companion.Tests -c Release -f net462
 
+      - name: Test packaging rejection paths
+        shell: pwsh
+        run: ./tests/test-packaging.ps1
+
       - name: Test production synchronization and saves on .NET Framework
         shell: pwsh
         run: |
