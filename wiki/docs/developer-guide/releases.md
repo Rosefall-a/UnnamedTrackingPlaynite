@@ -17,7 +17,7 @@ version fields just to make a release.
    checks before treating the release as verified.
 
 GitHub's `release.published` event runs against the tagged release commit, so the
-published binary is built from the exact commit selected for the release. citeturn2search5
+published binary is built from the exact commit selected for the release.
 
 ## What you no longer need to do
 
@@ -37,4 +37,4 @@ are needed later, add an explicit prerelease workflow rather than silently chang
 stable-version rules.
 
 Playnite requires a valid `extension.yaml` manifest and distributed extensions are
-normally packaged as `.pext` files. citeturn0search0
+normally packaged as `.pext` files.
