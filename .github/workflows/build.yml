@@ -38,11 +38,17 @@ jobs:
         shell: pwsh
         run: ./tests/validate-extension.ps1 -ExtensionDirectory "src/UnnamedTrackingPlaynite/bin/Release/net462"
 
+      - name: Build and validate PEXT package
+        shell: pwsh
+        run: ./pack.ps1 -NoBuild
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: unnamed-tracking-playnite
-          path: src/UnnamedTrackingPlaynite/bin/Release/net462/
+          path: |
+            src/UnnamedTrackingPlaynite/bin/Release/net462/
+            artifacts/*.pext
 
   wiki:
     runs-on: ubuntu-latest
