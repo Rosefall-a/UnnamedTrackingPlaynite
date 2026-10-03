@@ -24,7 +24,9 @@ if (-not $NoBuild) {
     if ($LASTEXITCODE -ne 0) { throw "Extension build failed with exit code $LASTEXITCODE." }
 }
 
-& (Join-Path $root "tests/validate-extension.ps1") -ExtensionDirectory $output
+$validationArgs = @{ ExtensionDirectory = $output }
+if ($Version) { $validationArgs.ExpectedVersion = $Version }
+& (Join-Path $root "tests/validate-extension.ps1") @validationArgs
 if ($Version) {
     $manifest = Get-Content (Join-Path $output "extension.yaml") -Raw
     $builtVersion = [regex]::Match($manifest, '(?m)^Version:\s*(.+)$').Groups[1].Value.Trim()
