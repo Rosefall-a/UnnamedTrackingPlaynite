@@ -28,6 +28,10 @@ jobs:
       - name: Build synchronization regression harness
         run: dotnet build tests/Companion.Tests -c Release -f net462
 
+      - name: Test packaging rejection paths
+        shell: pwsh
+        run: ./tests/test-packaging.ps1
+
       - name: Test production synchronization and saves on .NET Framework
         shell: pwsh
         run: |
@@ -41,6 +45,10 @@ jobs:
       - name: Build and validate PEXT package
         shell: pwsh
         run: ./pack.ps1 -NoBuild
+
+      - name: Exercise release-version packaging path
+        shell: pwsh
+        run: ./pack.ps1 -Version "9.9.9"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

@@ -19,7 +19,8 @@ if (-not (Test-Path $manifestPath -PathType Leaf)) {
 $manifest = Get-Content $manifestPath -Raw
 $fields = @{}
 foreach ($name in @("Id", "Name", "Author", "Version", "Module", "Type")) {
-    $matches = [regex]::Matches($manifest, "(?m)^\${name}:\s*(\S[^\r\n]*)\r?$")
+    $pattern = "(?m)^" + [regex]::Escape($name) + ":\s*(\S[^\r\n]*)\r?$"
+    $matches = [regex]::Matches($manifest, $pattern)
     if ($matches.Count -ne 1) {
         throw "Manifest must contain exactly one non-empty '$${name}'."
     }
@@ -46,9 +47,10 @@ foreach ($file in Get-ChildItem $ExtensionDirectory -Recurse -File) {
     }
 }
 
-$project = [xml](Get-Content (Join-Path $PSScriptRoot '../src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj') -Raw)
-$properties = $project.Project.PropertyGroup
-$effectiveVersion = if ($ExpectedVersion) { $ExpectedVersion } else { [string]$properties.Version }
+$projectText = Get-Content (Join-Path $PSScriptRoot '../src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj') -Raw
+$projectVersionMatch = [regex]::Match($projectText, '(?s)<Version\b[^>]*>\s*([^<]+?)\s*</Version>')
+$projectVersion = $projectVersionMatch.Groups[1].Value.Trim()
+$effectiveVersion = if ($ExpectedVersion) { $ExpectedVersion } else { $projectVersion }
 
 if ($effectiveVersion -notmatch '^\d+\.\d+\.\d+$') {
     throw "Effective version must contain major.minor.patch."

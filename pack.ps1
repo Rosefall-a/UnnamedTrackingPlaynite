@@ -63,7 +63,9 @@ try {
         ) -DestinationPath $zip
         Move-Item $zip $packagePath -Force
     }
-    & (Join-Path $root "tests/validate-package.ps1") -PackagePath $packagePath
+    $packageValidationArgs = @{ PackagePath = $packagePath }
+    if ($Version) { $packageValidationArgs.ExpectedVersion = $Version }
+    & (Join-Path $root "tests/validate-package.ps1") @packageValidationArgs
     Write-Host "Created $packagePath"
 } finally {
     Remove-Item $staging -Recurse -Force
