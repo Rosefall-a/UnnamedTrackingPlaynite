@@ -18,10 +18,24 @@
     <None Include="extension.yaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <ExtensionManifestContents>
+Id: UnnamedTrackingPlaynite
+Name: Unnamed Tracking
+Author: Rosefall-a
+Version: $(Version)
+Module: UnnamedTrackingPlaynite.dll
+Type: GenericPlugin
+Links:
+    - Name: Source
+      Url: https://github.com/Rosefall-a/UnnamedTrackingPlaynite
+    </ExtensionManifestContents>
+  </PropertyGroup>
+
   <Target Name="StampExtensionManifest" AfterTargets="Build">
     <WriteLinesToFile
       File="$(TargetDir)extension.yaml"
-      Lines="Id: UnnamedTrackingPlaynite;Name: Unnamed Tracking;Author: Rosefall-a;Version: $(Version);Module: UnnamedTrackingPlaynite.dll;Type: GenericPlugin;Links:;    - Name: Source;      Url: https://github.com/Rosefall-a/UnnamedTrackingPlaynite"
+      Lines="$(ExtensionManifestContents)"
       Overwrite="true"
       Encoding="UTF-8" />
   </Target>
