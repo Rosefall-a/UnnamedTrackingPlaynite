@@ -19,7 +19,8 @@ if (-not (Test-Path $manifestPath -PathType Leaf)) {
 $manifest = Get-Content $manifestPath -Raw
 $fields = @{}
 foreach ($name in @("Id", "Name", "Author", "Version", "Module", "Type")) {
-    $matches = [regex]::Matches($manifest, "(?m)^\${name}:\s*(\S[^\r\n]*)\r?$")
+    $pattern = "(?m)^" + [regex]::Escape($name) + ":\s*(\S[^\r\n]*)\r?$"
+    $matches = [regex]::Matches($manifest, $pattern)
     if ($matches.Count -ne 1) {
         throw "Manifest must contain exactly one non-empty '$${name}'."
     }
