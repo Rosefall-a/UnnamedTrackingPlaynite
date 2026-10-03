@@ -48,8 +48,8 @@ foreach ($file in Get-ChildItem $ExtensionDirectory -Recurse -File) {
 }
 
 $project = [xml](Get-Content (Join-Path $PSScriptRoot '../src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj') -Raw)
-$properties = $project.Project.PropertyGroup
-$effectiveVersion = if ($ExpectedVersion) { $ExpectedVersion } else { [string]$properties.Version }
+$projectVersion = [string]$project.SelectSingleNode("//Version")
+$effectiveVersion = if ($ExpectedVersion) { $ExpectedVersion } else { $projectVersion }
 
 if ($effectiveVersion -notmatch '^\d+\.\d+\.\d+$') {
     throw "Effective version must contain major.minor.patch."
