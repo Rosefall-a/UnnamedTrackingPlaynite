@@ -1,4 +1,7 @@
-param([Parameter(Mandatory = $true)][string]$PackagePath)
+param(
+    [Parameter(Mandatory = $true)][string]$PackagePath,
+    [string]$ExpectedVersion = ""
+)
 
 $ErrorActionPreference = 'Stop'
 $package = Get-Item $PackagePath
@@ -14,7 +17,9 @@ try {
         }
     } finally { $archive.Dispose() }
     [System.IO.Compression.ZipFile]::ExtractToDirectory($package.FullName, $extract)
-    & (Join-Path $PSScriptRoot 'validate-extension.ps1') -ExtensionDirectory $extract
+    $validationArgs = @{ ExtensionDirectory = $extract }
+    if ($ExpectedVersion) { $validationArgs.ExpectedVersion = $ExpectedVersion }
+    & (Join-Path $PSScriptRoot 'validate-extension.ps1') @validationArgs
     $manifest = Get-Content (Join-Path $extract 'extension.yaml') -Raw
     $version = [regex]::Match($manifest, '(?m)^Version:\s*(.+)$').Groups[1].Value.Trim()
     if ($package.Name -cne "UnnamedTrackingPlaynite-$version.pext") { throw "PEXT filename does not match its manifest version." }
