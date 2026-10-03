@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$ExtensionDirectory
+    [string]$ExtensionDirectory,
+
+    [string]$ExpectedVersion = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,7 +34,21 @@ foreach ($file in Get-ChildItem $ExtensionDirectory -Recurse -File) {
 }
 $project = [xml](Get-Content (Join-Path $PSScriptRoot '../src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj') -Raw)
 $properties = $project.Project.PropertyGroup
-if ($fields.Version -ne $properties.Version) { throw "Project and manifest versions do not agree." }
+$effectiveVersion = if ($ExpectedVersion) { $ExpectedVersion } else { $properties.Version }
+if ($effectiveVersion -notmatch '^\d+\.\d+\.\d+
+$assembly = [System.Reflection.AssemblyName]::GetAssemblyName((Resolve-Path $modulePath))
+if ($assembly.Name -ne 'UnnamedTrackingPlaynite' -or $assembly.Version.ToString() -ne "$($effectiveVersion).0") {
+    throw "Built assembly identity/version does not agree with the manifest and project."
+}
+$fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path $modulePath))
+if ($fileVersion.FileVersion -ne "$($effectiveVersion).0") { throw "Built file version does not match the manifest/project version." }
+Write-Host "Validated extension $($fields.Id) $($fields.Version)"
+) {
+    throw "Effective version must contain major.minor.patch."
+}
+if ($fields.Version -ne $effectiveVersion) {
+    throw "Manifest version '$($fields.Version)' does not match effective version '$effectiveVersion'."
+}
 $assembly = [System.Reflection.AssemblyName]::GetAssemblyName((Resolve-Path $modulePath))
 if ($assembly.Name -ne 'UnnamedTrackingPlaynite' -or $assembly.Version.ToString() -ne "$($fields.Version).0") {
     throw "Built assembly identity/version does not agree with the manifest and project."
