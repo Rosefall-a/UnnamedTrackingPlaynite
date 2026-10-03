@@ -32,13 +32,11 @@ foreach ($file in Get-ChildItem $ExtensionDirectory -Recurse -File) {
 }
 $project = [xml](Get-Content (Join-Path $PSScriptRoot '../src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj') -Raw)
 $properties = $project.Project.PropertyGroup
-if ($fields.Version -ne $properties.Version -or
-    $properties.AssemblyVersion -ne "$($fields.Version).0" -or
-    $properties.FileVersion -ne "$($fields.Version).0") { throw "Project and manifest versions do not agree." }
+if ($fields.Version -ne $properties.Version) { throw "Project and manifest versions do not agree." }
 $assembly = [System.Reflection.AssemblyName]::GetAssemblyName((Resolve-Path $modulePath))
-if ($assembly.Name -ne 'UnnamedTrackingPlaynite' -or $assembly.Version.ToString() -ne $properties.AssemblyVersion) {
+if ($assembly.Name -ne 'UnnamedTrackingPlaynite' -or $assembly.Version.ToString() -ne "$($fields.Version).0") {
     throw "Built assembly identity/version does not agree with the manifest and project."
 }
 $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path $modulePath))
-if ($fileVersion.FileVersion -ne $properties.FileVersion) { throw "Built file version does not match the project." }
+if ($fileVersion.FileVersion -ne "$($fields.Version).0") { throw "Built file version does not match the manifest/project version." }
 Write-Host "Validated extension $($fields.Id) $($fields.Version)"
