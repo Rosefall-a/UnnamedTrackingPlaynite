@@ -47,8 +47,9 @@ foreach ($file in Get-ChildItem $ExtensionDirectory -Recurse -File) {
     }
 }
 
-$project = [xml](Get-Content (Join-Path $PSScriptRoot '../src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj') -Raw)
-$projectVersion = [string]$project.SelectSingleNode("//Version")
+$projectText = Get-Content (Join-Path $PSScriptRoot '../src/UnnamedTrackingPlaynite/UnnamedTrackingPlaynite.csproj') -Raw
+$projectVersionMatch = [regex]::Match($projectText, '(?s)<Version\b[^>]*>\s*([^<]+?)\s*</Version>')
+$projectVersion = $projectVersionMatch.Groups[1].Value.Trim()
 $effectiveVersion = if ($ExpectedVersion) { $ExpectedVersion } else { $projectVersion }
 
 if ($effectiveVersion -notmatch '^\d+\.\d+\.\d+$') {
