@@ -56,7 +56,7 @@ python -m pip install -r wiki/requirements.txt
 python -m mkdocs build --strict -f wiki/mkdocs.yml
 ```
 
-Both existing build workflows remain active, including package validation.
+The main build workflow remains active and now includes package validation.
 Main/PR builds produce artifacts; release publication requires an intentional tag
 matching the manifest/project version. See [release notes](CHANGELOG.md) and
 [release process](wiki/docs/developer-guide/releases.md). This change publishes no release.
