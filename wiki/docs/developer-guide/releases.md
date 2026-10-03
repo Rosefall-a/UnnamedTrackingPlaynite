@@ -1,23 +1,40 @@
 # Release process
 
-Version **0.1.2** is prepared as an unreleased update. This change does not publish
-a release. Runtime changes require consistent metadata before a future release:
-project `Version`, `AssemblyVersion`, `FileVersion`, extension manifest, package
-filename, README and release notes. The validators compare the project, built
-assembly/file version, packaged manifest and PEXT filename.
+The GitHub release tag is the **single source of truth** for published extension versions.
+Do not manually edit the project, assembly, manifest, package filename, or other internal
+version fields just to make a release.
 
-1. Review/merge the companion PR against `main` after both build workflows and
-   the wiki job pass. Keep unrelated work such as the AFK PR separate.
-2. Complete the Windows/Playnite [runtime acceptance checklist](../user-guide/screenshots.md)
-   and capture the actual requested screenshots. Record exact versions/results.
-3. Verify release notes and all version metadata. Build the PEXT from a clean
-   checkout and validate its actual entries. Inspect the resulting artifact.
-4. When release publication is explicitly intended, create and push the matching
-   `v0.1.2` tag on the reviewed commit. The PEXT workflow refuses a mismatched tag.
-5. Review the generated release notes and attachment, then test installation of
-   that exact PEXT. Do not rebuild and silently replace an already distributed
-   version with different content.
+## Publish a release
 
-Main pushes and draft PRs build artifacts only. The existing release action runs
-only for an intentional version tag; ordinary maintenance commits do not create
-a release. No force-push, unrelated branch edits, or automatic PR merge is needed.
+1. Merge the reviewed changes to `main` and wait for normal CI to pass.
+2. Open **Releases → Draft a new release**.
+3. Create a semantic version tag such as `v0.2.0` on the commit you want to release.
+4. Publish the release. GitHub Actions validates the tag, builds with version `0.2.0`,
+   stamps `extension.yaml`, generates the matching assembly/file version, packages the
+   PEXT, validates its contents, and uploads `UnnamedTrackingPlaynite-0.2.0.pext` to
+   that release.
+5. Install the exact attached PEXT and perform the Windows/Playnite runtime acceptance
+   checks before treating the release as verified.
+
+GitHub's `release.published` event runs against the tagged release commit, so the
+published binary is built from the exact commit selected for the release. citeturn2search5
+
+## What you no longer need to do
+
+- Do not edit `AssemblyVersion` or `FileVersion`.
+- Do not edit `extension.yaml` for every release.
+- Do not rename a PEXT manually.
+- Do not make a version-only commit before every release.
+
+Local development defaults to the last stable source version so ordinary builds continue
+to have a valid Playnite manifest. Release CI overrides that value from the tag.
+
+## Tag rules
+
+Stable release tags must be exactly `vMAJOR.MINOR.PATCH`. Tags such as `0.2.0`,
+`v0.2`, or `v0.2.0-beta` are rejected by the stable-release workflow. If prereleases
+are needed later, add an explicit prerelease workflow rather than silently changing the
+stable-version rules.
+
+Playnite requires a valid `extension.yaml` manifest and distributed extensions are
+normally packaged as `.pext` files. citeturn0search0
